@@ -1,0 +1,13 @@
+# docker-compose.minio-quay.yml — pull MinIO from quay.io instead of Docker Hub.
+#
+# As of 2026-09-20 `docker pull minio/minio:latest` and `minio/mc:latest` answer
+# "pull access denied ... repository does not exist" on Docker Hub, so the stock
+# docker-compose.yml cannot come up. MinIO publishes the same images on quay.io.
+# License disposition is unchanged (operator-pulled AGPL sidecar, image-licenses.json).
+#
+#   docker compose -p vexa-v012 -f docker-compose.yml -f docker-compose.minio-quay.yml up -d
+services:
+  minio:
+    image: quay.io/minio/minio:latest
+  minio-init:
+    image: quay.io/minio/mc:latest

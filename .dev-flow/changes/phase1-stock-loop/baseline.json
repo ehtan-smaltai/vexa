@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "change_id": "phase1-stock-loop",
+  "kind": "feature",
+  "created_at": "2026-09-20T05:46:19+00:00",
+  "git": {
+    "available": true,
+    "repository_scope": "project-root",
+    "head": "dba990b413bd0f888b02d46a24f802db492addbb",
+    "branch": "main",
+    "dirty": false
+  },
+  "notice": "Historical baseline only. No implementation or checks performed."
+}
