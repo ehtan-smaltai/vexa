@@ -28,8 +28,10 @@ case "$MODE" in
     # The key may also be passed as the second argument (`model-switch anthropic <key>`) for
     # shells where piping into ssh is awkward (Windows cmd). Stdin is read only when it is not.
     if [ -n "${2:-}" ]; then RAW="$2"; else RAW=$(cat | tr -d '\r'); fi
-    KEY=$(printf '%s\n' "$RAW" | grep -i '^claude' | head -1 | sed -E 's/^[Cc]laude[^:]*:[[:space:]]*//')
-    [ -n "$KEY" ] || KEY=$(printf '%s\n' "$RAW" | grep -m1 .)
+    # `|| true` on both greps: under `set -e -o pipefail` a no-match grep would otherwise abort the
+    # script silently before anything is written (a bare key has no "Claude" label).
+    KEY=$(printf '%s\n' "$RAW" | { grep -i '^claude' || true; } | head -1 | sed -E 's/^[Cc]laude[^:]*:[[:space:]]*//')
+    [ -n "$KEY" ] || KEY=$(printf '%s\n' "$RAW" | { grep -m1 . || true; })
     KEY=$(printf '%s' "$KEY" | tr -d ' \n\t')
     [ -n "$KEY" ] || { echo "no key on stdin" >&2; exit 2; }
     _clear_local
