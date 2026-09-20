@@ -1,0 +1,17 @@
+# docker-compose.flows-src.yml — run the flows services from THIS checkout's source.
+#
+# Same idea as docker-compose.hot.yml for meeting-api/runtime/terminal, for the flows image: bind
+# core/flows/src over the image's /app/src so a fix in flows_steps/ or flows_defs/ is live on the
+# next container start, without rebuilding vexaai/v012-flows. Development and evaluation only.
+#
+#   docker compose -p vexa-v012 -f docker-compose.yml -f docker-compose.flows-src.yml up -d flows-api flows-worker
+services:
+  flows-api:
+    volumes:
+      - ../../core/flows/src:/app/src:ro
+  flows-worker:
+    volumes:
+      - ../../core/flows/src:/app/src:ro
+  flows-mailbox:
+    volumes:
+      - ../../core/flows/src:/app/src:ro

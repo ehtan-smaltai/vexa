@@ -83,6 +83,15 @@ def dispatch_turn(uid: str, session: str, prompt: str, room: dict | None = None)
         swallowed("flows_steps.agent.dispatch_turn", "stream-open timeout, the turn is running", e)
         return base
     if not _ok(code):
+        # THE ROOM IS OPTIONAL CAPABILITY. An agent-api that does not carry the meeting room
+        # answers 422 `extra_forbidden` naming the `room_*` fields. That is a fact about the
+        # deployment, not about this meeting: the turn is still worth running, just without the
+        # attendees' desks in context. Retry once, room-less, and say so.
+        if room and str(code) == "422" and "room_" in str(out):
+            swallowed("flows_steps.agent.dispatch_turn",
+                      "agent-api does not accept the meeting room fields; dispatching without the room",
+                      StepError(str(out)[:200]))
+            return dispatch_turn(uid, session, prompt, room=None)
         raise StepError(
             f"the agent turn for {uid}/{session} was not dispatched: agent-api answered {code} — "
             f"{str(out)[:200]}",

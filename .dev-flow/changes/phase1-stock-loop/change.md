@@ -96,6 +96,25 @@ https://claude.ai/artifact/3sS8PRi9HHhZw8g79Yzx3y
   54.179.146.36, tag Name=vexa-minutes-phase1. Docker CE installed by cloud-init
   (`scratchpad/vm-user-data.sh`). Compose binds every port to loopback, so the UI is reached
   through an SSH tunnel; the extra security-group ports are unused but harmless.
+- D-8 **Fully self-hosted model tier as the unattended path** (user away 2 h, asked for "everything
+  prepared" and had asked about 100 % self-hosting). The OSS cut ships ONE harness runner,
+  `claude-code` (the `.env.example` mention of `openai-agent` is stale; `llm/registry.py` lists
+  only `claude-code`). The harness accepts an Anthropic-compatible gateway via
+  `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`, and Ollama ≥ 0.14 serves `/v1/messages`, so
+  `deploy/compose/docker-compose.localai.yml` adds `ollama` and `whisper`
+  (faster-whisper-server, CPU) on the stack network. Wiring test model: `qwen3:1.7b` on 2 vCPU —
+  expected slow and low quality; a real deployment needs a GPU host (g6.xlarge class) and a
+  20B–32B model. `.env` before this change is saved at `~/.env.before-localai` on the VM.
+- D-9 **Company layer and kickoff prompt supplied by us.** Two more things the OSS cut leaves to the
+  private tree: (a) the instance gate (`global_setup` platform setting) is meant to be flipped by an
+  agent-api verifier route that is not in this cut, so it was set through admin-api's internal
+  settings door after creating a `_global` git repo (README "# Smalt AI", STRUCTURE.md) in the
+  agent-workspaces volume and pointing `VEXA_GLOBAL_SYSTEM_WORKSPACE_PATH` at it; (b) the
+  showcase `behavior/` has no `prompts/process-meeting.md`, so the first replay ended
+  `behavior:not_present`. Wrote `behavior/prompts/process-meeting.md` (transcript-first, fixed
+  headings, verbatim quotes for the grounding gate) and `docker-compose.behavior.yml` to bind
+  the checkout's `behavior/` at `VEXA_BEHAVIOR_DIR=/behavior-local`. Company name "Smalt AI" is a
+  placeholder for the user to confirm.
 - D-7 **No model credential on the VM yet.** The laptop's Claude subscription file is not copied
   to a cloud host, and API keys are the user's to enter. R-005/R-006 wait on the user adding a
   credential to `deploy/compose/.env` on the VM (or Settings → Models in the UI).
@@ -138,6 +157,27 @@ repository does not exist`. Docker Hub no longer serves `minio/minio:latest` or 
 install today. Fix: `deploy/compose/docker-compose.minio-quay.yml` overrides both images to
 `quay.io/minio/...`, which pull fine. Candidate upstream issue/PR.
 
+**T-9 repair trail (the minutes lane on the OSS cut), each found by running the replay and reading
+the reaction's `reason`:**
+
+| # | Symptom | Cause | Fix |
+| --- | --- | --- | --- |
+| 1 | reaction admitted but PARKED, `gate: missing` | instance gate reads admin-api `global_setup`; the verifier route that sets it is not in this cut | created `_global` repo in the workspaces volume; `PUT /internal/settings/global_setup` state=completed, company="Smalt AI" |
+| 2 | `process_meeting` done with `behavior:not_present` | showcase `behavior/` has no `prompts/process-meeting.md` | wrote `behavior/prompts/process-meeting.md`; `docker-compose.behavior.yml` binds it at `VEXA_BEHAVIOR_DIR=/behavior-local` |
+| 3 | agent-api 422 `extra_forbidden room_meeting_id` | this cut's chat route has no meeting-room fields; flows always sends them when the row resolves | `flows_steps/agent.py`: on 422 naming `room_`, retry the dispatch without the room (logged via `swallowed`) |
+| 4 | agent-api 500 ← runtime 502 `cannot access .../agent-workspaces/_data/1` | organizer's workspace never seeded (no sign-in yet); worker mount subpath `1` absent | `POST /api/workspace/init` as user 1; removed the dead `Created` worker container |
+| 5 | `GET /api/workspace/file?slug=_global` → 403 for user 1 | per-user reads are scoped to own mounts; `_global` not among them | `mailtext.company_name` falls back to admin-api `/admin/instance` `company` |
+| 6 | patched flows code must run without an image rebuild | image bakes `/app/src` | `docker-compose.flows-src.yml` binds `core/flows/src` over `/app/src` (same pattern as `docker-compose.hot.yml`) |
+
+Model tier for the unattended run: Ollama `qwen3:1.7b`, 20k context, CPU — observed ~2.3 tokens/s
+generation. **Outcome:** the chain gate → prompt → dispatch → worker spawn → harness → Ollama
+`POST /v1/messages` is proven live (worker `vexa-worker-1-chat-meet-5` reached Ollama), but each
+harness request took ~5 min of prompt processing and timed out (Ollama logged 500 after 4m59s,
+one 200 after 5m48s); no reply reached flows inside its 15-min ceiling. Reaction cancelled by
+operator. Verdict: a CPU-only t3.large cannot run the claude-code harness against a local model;
+the same wiring on a GPU host (or a much larger CPU box) is the self-hosted path. R-006 therefore
+still waits on either the user's Anthropic key (`bin/model-switch anthropic`) or a GPU host.
+
 **Symptom (T-1):** the first `gh repo fork ... --clone=false --remote=false` printed usage and
 created nothing; the VM clone of the fork then failed with "could not read Username". Re-ran
 `gh repo fork vexa-ai/vexa --clone=false` from a non-repo directory: fork created, public.
@@ -150,14 +190,19 @@ created nothing; the VM clone of the fork then failed with "could not read Usern
 
 ## Handoff
 
-- Current task: T-9 (full replay) is blocked on a model credential the user must add (D-7).
-  T-10 partially done (sign-in page renders; user signs in).
-- Completed work: T-1 through T-8; stack healthy on the VM; SMTP lane proven; seed proven.
-- Unverified areas: R-006 (minutes produced and mailed to three recipients), R-007 sign-in,
-  and the bot image pull finishing (`~/pull.log` on the VM should end with `PULL_DONE`).
-- Blockers: model credential. Options for the user: Terminal → Settings → Models (no restart),
-  or `ANTHROPIC_API_KEY=` in `~/vexa/deploy/compose/.env` on the VM followed by
-  `$(cat ~/compose-cmd.txt) up -d`. Then run `cd ~/vexa/deploy/compose && ./bin/phase1-replay`.
+- Current task: T-9 (full replay) blocked on a usable model: the user's Anthropic key, or a GPU
+  host for the self-hosted path. Everything upstream of the model call is fixed and proven
+  (repair trail #1–#6). T-10 partially done (sign-in page renders; user signs in).
+- Completed work: T-1 through T-8; stack healthy on the VM; SMTP lane proven; seed proven;
+  gate open; prompt mounted; room fallback; workspace seeded; local Ollama + Whisper running.
+- Unverified areas: R-006 (minutes mailed to three recipients), R-007 sign-in, Whisper on real
+  speech (endpoint healthy only), quality of `behavior/prompts/process-meeting.md` on a real model.
+- Blockers: model. On the VM: `printf '%s' "$KEY" | ~/vexa/deploy/compose/bin/model-switch anthropic`
+  then `cd ~/vexa/deploy/compose && ./bin/phase1-replay`. For self-hosted: a g6.xlarge-class GPU
+  host running Ollama with a 20B–32B model, then `bin/model-switch local <model>`.
+- Current VM model settings: `ANTHROPIC_BASE_URL=http://ollama:11434`, model `qwen3:1.7b`
+  (the failed CPU test); `model-switch anthropic` clears them. Whisper is wired at
+  `TRANSCRIPTION_SERVICE_URL=http://whisper:8000` (base model, CPU).
 - Committed on branch `phase-1` of the fork (commit 0630fea1, pushed 2026-09-20 at the user's
   request): `deploy/compose/docker-compose.mailpit.yml`, `deploy/compose/docker-compose.minio-quay.yml`,
   `deploy/compose/bin/phase1-replay`, this record. The VM checkout tracks the same branch.

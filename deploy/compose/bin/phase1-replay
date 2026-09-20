@@ -95,14 +95,8 @@ JSON
 
 echo "→ waiting for the post_meeting reaction (up to 15 min)"
 for i in $(seq 1 90); do
-  ROW=$(curl -sf "${FLOWS}/reactions?source_event_id=${SRC}" -H "X-Flows-Operator-Key: ${FLOWS_KEY}" 2>/dev/null || true)
-  STATUS=$(printf '%s' "$ROW" | python3 -c 'import sys,json
-try:
-    d=json.load(sys.stdin); rs=d.get("reactions", d if isinstance(d,list) else [])
-    r=[x for x in rs if x.get("flow")=="post_meeting"]; r=r[0] if r else (rs[0] if rs else {})
-    print(r.get("status","?"), r.get("step") or r.get("current_step") or "", r.get("reason") or r.get("error") or "")
-except Exception as e: print("?", "", str(e)[:80])')
-  echo "  [$((i*10))s] ${STATUS}"
+  STATUS=$(psql -c "select status || ' ' || step || ' ' || coalesce(left(reason, 160), '') from reaction where source_event_id = '${SRC}' and flow = 'post_meeting' order by created_at desc limit 1;")
+  echo "  [$((i*10))s] ${STATUS:-no reaction row yet}"
   case "$STATUS" in done*|failed*|not_present*|blocked*) break;; esac
   sleep 10
 done

@@ -1,0 +1,19 @@
+# docker-compose.behavior.yml — mount this checkout's behavior/ tree into the flows containers.
+#
+# The flows image bakes only the published showcase, which carries no agent prompts; the real
+# prompts are meant to arrive as a private content tree at $VEXA_BEHAVIOR_DIR. For a fork that
+# keeps its prompts in-repo (behavior/prompts/*.md), bind the checkout in and point the variable
+# at it. Prompt edits are picked up on the next reaction, no image rebuild.
+#
+#   VEXA_BEHAVIOR_DIR=/behavior-local   (in .env)
+#   docker compose -p vexa-v012 -f docker-compose.yml -f docker-compose.behavior.yml up -d
+services:
+  flows-api:
+    volumes:
+      - ../../behavior:/behavior-local:ro
+  flows-worker:
+    volumes:
+      - ../../behavior:/behavior-local:ro
+  flows-mailbox:
+    volumes:
+      - ../../behavior:/behavior-local:ro

@@ -1,0 +1,44 @@
+# docker-compose.localai.yml — fully self-hosted model tier for a single-host evaluation.
+#
+# Two OpenAI-compatible servers on the stack network, so bots and agent workers (which the runtime
+# attaches to the same DOCKER_NETWORK) reach them by service name and nothing leaves the host:
+#
+#   ollama   — open-weight LLM server. Also speaks the Anthropic Messages API (/v1/messages), which
+#              is what the claude-code harness needs: set ANTHROPIC_BASE_URL=http://ollama:11434,
+#              ANTHROPIC_AUTH_TOKEN=ollama (any non-empty string), VEXA_AGENT_MODEL=<ollama model>.
+#   whisper  — faster-whisper-server (OpenAI /v1/audio/transcriptions). Point the stack at it with
+#              TRANSCRIPTION_SERVICE_URL=http://whisper:8000 and any TRANSCRIPTION_SERVICE_TOKEN.
+#
+# CPU-only boxes can run the small models below for a wiring test; real meetings want a GPU host
+# (deploy/transcription for Whisper, and Ollama with a 20B–32B model on a 24 GB card).
+#
+#   docker compose -p vexa-v012 -f docker-compose.yml -f docker-compose.localai.yml up -d
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "127.0.0.1:${OLLAMA_HOST_PORT:-11434}:11434"
+    environment:
+      - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-32768}
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-30m}
+    volumes:
+      - ollama-models:/root/.ollama
+    networks: [vexa]
+    restart: unless-stopped
+
+  whisper:
+    image: fedirz/faster-whisper-server:latest-cpu
+    ports:
+      - "127.0.0.1:${WHISPER_HOST_PORT:-18000}:8000"
+    environment:
+      - WHISPER__MODEL=${WHISPER_MODEL:-Systran/faster-whisper-base}
+      - WHISPER__INFERENCE_DEVICE=cpu
+      - WHISPER__TTL=-1
+    volumes:
+      - whisper-models:/root/.cache/huggingface
+    networks: [vexa]
+    restart: unless-stopped
+
+volumes:
+  ollama-models:
+  whisper-models:

@@ -125,7 +125,23 @@ def company_name(uid: str) -> str:
             continue
         m = _H1.match(line)
         return m.group(1).strip() if m else COMPANY_UNSET
-    return COMPANY_UNSET
+    # THE SECOND SOURCE IS IDENTITY, not a guess. Where agent-api does not expose `_global` to a
+    # per-user read (the workspace file route scopes reads to the subject's own mounts), the
+    # company name is still on record: admin-api's instance document carries the `company` that
+    # was accepted when the gate was committed. Same door the instance gate already reads.
+    return _company_from_instance() or COMPANY_UNSET
+
+
+def _company_from_instance() -> str:
+    from . import common
+    try:
+        code, body = common.http("GET", f"{common.ADMIN_API.rstrip('/')}/admin/instance",
+                                 {"X-Admin-API-Key": common.require_admin_key()}, timeout=5)
+    except Exception:  # noqa: BLE001 — a missing name falls through to the recognisable placeholder
+        return ""
+    if code == 200 and isinstance(body, dict):
+        return str(body.get("company") or "").strip()
+    return ""
 
 
 def _split(raw: str) -> tuple[str, str]:

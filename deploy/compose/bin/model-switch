@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# model-switch — point this stack's agent harness at one model backend and reload the services.
+#
+#   ./bin/model-switch anthropic          # Anthropic API. Reads the key from STDIN (never argv):
+#                                         #   printf '%s' "$KEY" | ./bin/model-switch anthropic
+#   ./bin/model-switch local qwen3:32b    # a model served by the local Ollama (docker-compose.localai.yml)
+#   ./bin/model-switch show               # print the current (non-secret) model settings
+#
+# Edits deploy/compose/.env in place and runs `up -d` so agent-api, runtime and flows pick the
+# change up. Anthropic keys are written to ANTHROPIC_API_KEY only; the value is never echoed.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+MODE="${1:-show}"
+C=$(cat ~/compose-cmd.txt 2>/dev/null || echo "docker compose -p vexa-v012 -f docker-compose.yml")
+
+_set() { # KEY VALUE — replace or append one line in .env
+  if grep -q "^$1=" .env; then sed -i "s|^$1=.*|$1=$2|" .env; else printf '%s=%s\n' "$1" "$2" >> .env; fi
+}
+_clear_local() {
+  for k in ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL \
+           ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL VEXA_AGENT_MODEL; do _set "$k" ""; done
+}
+
+case "$MODE" in
+  anthropic)
+    KEY=$(cat | tr -d '\r\n ')
+    [ -n "$KEY" ] || { echo "no key on stdin" >&2; exit 2; }
+    _clear_local
+    _set ANTHROPIC_API_KEY "$KEY"
+    echo "→ Anthropic API selected (key ${#KEY} chars, not shown)"
+    ;;
+  local)
+    MODEL="${2:?model name, e.g. qwen3:32b}"
+    _set ANTHROPIC_API_KEY ""
+    _set ANTHROPIC_BASE_URL "http://ollama:11434"
+    _set ANTHROPIC_AUTH_TOKEN "ollama"
+    for k in ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL \
+             ANTHROPIC_DEFAULT_HAIKU_MODEL VEXA_AGENT_MODEL; do _set "$k" "$MODEL"; done
+    echo "→ local Ollama model ${MODEL} selected"
+    ;;
+  show)
+    grep -E "^(ANTHROPIC_BASE_URL|ANTHROPIC_AUTH_TOKEN|ANTHROPIC_MODEL|VEXA_AGENT_MODEL|TRANSCRIPTION_SERVICE_URL)=" .env
+    printf 'ANTHROPIC_API_KEY set: %s\n' "$(grep -c '^ANTHROPIC_API_KEY=.\+' .env)"
+    exit 0
+    ;;
+  *) echo "usage: model-switch anthropic | local <model> | show" >&2; exit 2;;
+esac
+
+$C up -d >/dev/null 2>&1
+sleep 15
+curl -s http://127.0.0.1:${RUNTIME_API_PORT:-18090}/health | python3 -c 'import sys,json; print("runtime model_inference:", json.load(sys.stdin)["capabilities"]["model_inference"]["state"])'
