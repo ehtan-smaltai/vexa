@@ -158,12 +158,12 @@ created nothing; the VM clone of the fork then failed with "could not read Usern
 - Blockers: model credential. Options for the user: Terminal → Settings → Models (no restart),
   or `ANTHROPIC_API_KEY=` in `~/vexa/deploy/compose/.env` on the VM followed by
   `$(cat ~/compose-cmd.txt) up -d`. Then run `cd ~/vexa/deploy/compose && ./bin/phase1-replay`.
-- Local uncommitted additions (fork checkout on the laptop): `deploy/compose/docker-compose.mailpit.yml`,
-  `deploy/compose/docker-compose.minio-quay.yml`, `deploy/compose/bin/phase1-replay`, this record.
-  Same three files exist on the VM checkout. Nothing committed or pushed yet (user has not asked).
+- Committed on branch `phase-1` of the fork (commit 0630fea1, pushed 2026-09-20 at the user's
+  request): `deploy/compose/docker-compose.mailpit.yml`, `deploy/compose/docker-compose.minio-quay.yml`,
+  `deploy/compose/bin/phase1-replay`, this record. The VM checkout tracks the same branch.
 - Access: `ssh -i ~/.ssh/aws-eb -N -L 13000:127.0.0.1:13000 -L 18056:127.0.0.1:18056 -L 18025:127.0.0.1:18025 ubuntu@54.179.146.36`
   then http://localhost:13000 (terminal), :18025 (Mailpit).
 - Cost: t3.large ≈ US$0.11/h while running; `aws ec2 stop-instances --instance-ids i-00fa311d4579c0678` when idle.
 - Laptop leftovers: `%LOCALAPPDATA%\Docker\run.stale-*` and `docker-secrets-engine.stale-*` can be
   deleted; Docker Desktop itself still crash-loops there (unresolved, out of scope now).
-- Release status: nothing committed, nothing pushed.
+- Release status: pushed to `origin/phase-1` on the fork; no PR, no merge, no deploy.
