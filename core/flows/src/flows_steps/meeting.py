@@ -186,6 +186,47 @@ def transcript_text(uid: str, meeting_id) -> str | None:
     return "\n".join(str(g.get("text") or "") for g in segs)
 
 
+def transcript_dialogue(uid: str, meeting_id, cap: int = 120_000) -> str | None:
+    """The meeting's words WITH their speakers, as `Speaker: text` lines — or **None** unreadable.
+
+    `transcript_text` joins the segment texts alone, because its one caller compares the report
+    against the words and a speaker label would only add false matches to that comparison. A
+    kickoff has the opposite need: minutes that attribute a decision to the wrong person are worse
+    than no minutes, so the turn must see who said what.
+
+    WHY A KICKOFF CARRIES THE WORDS AT ALL. The transcript was removed from the `meeting.completed`
+    FACT for two reasons — a fact must have one producer, and the copy was truncated to fit an
+    event. Neither applies here: this reads through the owning service at dispatch time, the words
+    are never stored, and `cap` is generous rather than a squeeze. The alternative in this cut is
+    no transcript at all, because the MCP toolbelt that would let the agent fetch it itself
+    (`shared/tools.apply_tool_grant`) is not wired into a worker turn — so the agent writes a
+    confident report from the title, and the grounding gate then refuses to mail it. Measured: two
+    dispatches, two ungrounded reports, one failed reaction.
+
+    `cap` truncates the TAIL and says so in the text rather than silently: a reader of the minutes
+    must be able to tell a short meeting from a cut one. Sized for a long meeting (roughly three
+    hours of speech) and well inside a modern context window.
+    """
+    try:
+        _st, body = http("GET", f"{meetings_door()}/transcripts/by-id/{meeting_id}",
+                         {"X-API-Key": user_api_key(str(uid))})
+    except StepError:
+        return None
+    if not isinstance(body, dict) or "segments" not in body:
+        return None
+    lines = []
+    for g in body.get("segments") or []:
+        text = str(g.get("text") or "").strip()
+        if not text:
+            continue
+        who = str(g.get("speaker") or "").strip()
+        lines.append(f"{who}: {text}" if who else text)
+    out = "\n".join(lines)
+    if len(out) > cap:
+        out = out[:cap] + "\n[transcript truncated here — the meeting continued beyond this point]"
+    return out
+
+
 def transcript_segment_count(uid: str, meeting_id) -> int | None:
     """HOW MANY SEGMENTS this meeting captured — or **None** when it could not be read at all.
 

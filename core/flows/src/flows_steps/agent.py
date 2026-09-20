@@ -201,6 +201,15 @@ def head_subjects(uid: str, limit: int = 3) -> list:
     return out
 
 
+class DoorAbsent(LookupError):
+    """THE ROUTE IS NOT SERVED HERE — a fact about the deployment, not about this call.
+
+    The sibling of `flows_defs.production.PromptAbsent` and of the `not_present` outcome a step
+    gets when a whole domain is absent, one notch smaller: the domain is deployed and answering,
+    but this particular door is not in its cut. A caller that can do without the effect turns this
+    into `NotPresent`; one that cannot lets it travel as the error it is."""
+
+
 def workspace_write(uid: str, path: str, content: str) -> None:
     """WRITE one file into ONE subject's workspace, as that subject, COMMITTED.
 
@@ -217,6 +226,15 @@ def workspace_write(uid: str, path: str, content: str) -> None:
     mail that has already gone out, and nobody would ever learn that from a return value."""
     code, body = http("PUT", f"{agent_door()}/api/workspace/file", {"X-User-Id": uid},
                       {"path": path, "content": content})
+    # A DOOR THAT IS NOT SERVED IS A DEPLOYMENT FACT, not a failed write. The open-core agent-api
+    # serves `GET /api/workspace/file` and no PUT, so every drop answers 405 and the whole
+    # post-meeting reaction fails AFTER its mail has already gone out — the one ordering in which
+    # a raise buys nothing: the minutes are delivered, and the desk copy is the extra. Raised for
+    # every other status, where the door exists and the write genuinely did not land.
+    if int(code or 0) in (404, 405):
+        raise DoorAbsent(
+            f"agent-api serves no PUT /api/workspace/file (HTTP {code}) — this deployment files "
+            f"no desk copy of {path!r}; the mail carries the report itself")
     if not _ok(code):
         raise StepError(f"workspace write {path!r} for {uid}: HTTP {code} — {str(body)[:200]}")
 

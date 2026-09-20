@@ -298,6 +298,18 @@ def mint_scaffold(kind: str, recipient: str, *, opening: str,
     url = body.get("url") if isinstance(body, dict) else None
     if 200 <= int(code or 0) < 300 and url:
         return str(url)
+    # A DEPLOYMENT THAT MINTS NO SCAFFOLDS IS A DEPLOYMENT, not a failure (decision 40.7's shape).
+    # `POST /internal/scaffolds` is absent from the open-core agent-api, so a 404 here is the
+    # route not existing rather than this preset being wrong — and the doctrine above ("a link
+    # that opens onto nothing is worse than no mail") is an argument against a BROKEN link, not
+    # against a mail that carries no button at all. The minutes travel verbatim in the body; the
+    # button is the personalisation half, and a deployment without it still owes people their
+    # minutes. So: no link, said out loud, and the caller sends.
+    if int(code or 0) == 404:
+        swallowed("flows_steps.common.mint_scaffold",
+                  "agent-api serves no /internal/scaffolds route — mailing without a link",
+                  None, recipient=recipient, scaffold_kind=kind, opening=opening)
+        return ""
     from flows import StepError
     detail = (body.get("detail") if isinstance(body, dict) else str(body))
     # 5xx is the platform having a moment; a 4xx is a fact about this preset, this kind or this

@@ -845,10 +845,29 @@ def build(reg: Registry, db) -> None:
             # so it lands as the same terminal `not_present` an absent agent domain does — never as
             # an exception, and never as a turn dispatched with an empty instruction, which would
             # bill a model to produce a report nobody could ground.
+            # THE ROW ID FIRST, because both the kick and the room need it. It used to be resolved
+            # four statements below, which was fine while nothing before it read the transcript.
+            # `refs["meeting_id"]` may still be a native id from `meeting_ref()`; only the row id
+            # always addresses the meetings domain (the same identity bug that once mailed meeting
+            # 97's attendees a link with no token).
+            row = mt.meeting_row(uid, ctx.refs.get("meeting_id"), ctx.refs.get("native"))
+            row_id = (row or {}).get("id") if isinstance(row, dict) else None
+            # THE GROUNDING GATE NEEDS THE SAME IDENTITY THIS DISPATCH USED (R-B19).
+            ctx.scratch["row_id"] = row_id
+            # THE WORDS, IN THE KICK — see `mt.transcript_dialogue` for why a kickoff carries them
+            # in this cut. A template that has no `{transcript}` placeholder simply ignores it, so
+            # a deployment running its own private prompt is unaffected.
+            dialogue = mt.transcript_dialogue(uid, row_id or ctx.refs["meeting_id"])
+            if dialogue is None:
+                raise StepError(
+                    "the meeting's transcript could not be read, so the turn would have nothing to "
+                    f"write the minutes from (meeting row {row_id or '?'}, ref "
+                    f"{ctx.refs['meeting_id']}). This is a broken read, not a quiet meeting.",
+                    retryable=True)
             try:
                 kick = prompt_for(ctx, "process-meeting.md").format(
                     mid=ctx.refs["meeting_id"], native=ctx.refs["native"],
-                    date=_meeting_stamp(ctx, uid))
+                    date=_meeting_stamp(ctx, uid), transcript=dialogue)
             except PromptAbsent as absent:
                 return NotPresent("behavior", detail=str(absent))
             # WHOSE DESKS THIS TURN MAY READ — the invite, ordered by who spoke, capped. Computed
@@ -865,16 +884,7 @@ def build(reg: Registry, db) -> None:
                                       ctx.refs.get("participants") or [],
                                       ctx.refs.get("participant_names") or {})
             ctx.scratch["room_read"] = room_read
-            # THE ROW ID, not refs["meeting_id"] — the room gate resolves a MEETINGS-DOMAIN ROW,
-            # and refs may still carry a native id from meeting_ref(). This is the same identity
-            # bug that mailed meeting 97's attendees a link with no token: `platform='unknown'`
-            # with an empty native is addressed by NO pair, and only the row id always exists.
-            row = mt.meeting_row(uid, ctx.refs.get("meeting_id"), ctx.refs.get("native"))
-            row_id = (row or {}).get("id") if isinstance(row, dict) else None
-            # THE ROW ID, STASHED. The grounding gate below needs the same identity this dispatch
-            # used, and it was reading `refs["meeting_id"]` instead — the ref, which may still be a
-            # native id (R-B19).
-            ctx.scratch["row_id"] = row_id
+            # (`row` / `row_id` are resolved at the top of this branch — the kick needs them too.)
             # The PROMPT names only as many desks as agent-api will actually mount: the wire
             # carries the whole ordered room, the sentence must not claim more than the cap allows.
             kick += _shared_report_rules(room_read[:read_max] if read_max else room_read, group)
@@ -915,11 +925,16 @@ def build(reg: Registry, db) -> None:
                     ctx.scratch["regrounded"] = True
                     ctx.scratch["baseline"] = ag.dispatch_turn(
                         uid, session,
+                        # THE WORDS ARE IN THE FIRST MESSAGE OF THIS SESSION, not behind a tool.
+                        # This used to name `mcp__vexa__meeting_transcript`, which no turn in this
+                        # cut can call (the toolbelt is not wired into a worker turn), so the
+                        # correction asked for the one thing the agent had already reported it
+                        # could not do — and the second failure read as the agent's fault.
                         "STOP. The report you just wrote contains nothing that appears in the "
-                        f"meeting. You did not read it. Call mcp__vexa__meeting_transcript with "
-                        f"meeting_id={ctx.refs['meeting_id']} and tail=0 NOW, read every segment, "
-                        "then write it again from what it returns — quoting one verbatim "
-                        "sentence with its speaker. If you cannot call that tool, say so.")
+                        "meeting. The full transcript was given to you in the first message of "
+                        "this session, between the TRANSCRIPT BEGINS and TRANSCRIPT ENDS markers. "
+                        "Read it again and rewrite the minutes from it, quoting one verbatim "
+                        "sentence with its speaker. Do not call any tool.")
                     return Wait(seconds=12)
                 raise StepError(
                     "the report is not grounded in the transcript — the agent did not read the "
@@ -1041,10 +1056,6 @@ def build(reg: Registry, db) -> None:
         # `process_meeting`'s reply IS the report and the receipt is where it lives. The commit sha
         # went with the desk write it referred to.
         report = _readable(ctx.prior["process_meeting"]["report"])
-        body = (_provenance(ctx, ctx.refs["uid"], to_attendee=False)
-                + report + "\n\n—\nRecorded by Vexa\n"
-                "Reply to this email with corrections or questions — I'll update what we hold "
-                "and answer here. Or open it and talk it through:")
         # THE SCAFFOLD, not a raw deeplink (PRD §5.5). No share token: this is the organiser's own
         # meeting, and a capability nobody needs is a capability nobody should be handed.
         # BY ROW ID, NEVER BY THE REF (R-B06). `email_attendees` resolves the row two steps later
@@ -1061,6 +1072,16 @@ def build(reg: Registry, db) -> None:
             provenance={"flow": "post_meeting", "step": "email_minutes",
                         "reaction_id": str(getattr(ctx, "reaction_id", "") or ""),
                         "minted_by": str(ctx.refs["uid"])})
+        # THE CLOSING IS BUILT AFTER THE MINT, because one of its sentences introduces the button.
+        # It used to be written before, ending in a colon that `notify.compose` then completed with
+        # the url — so a deployment that mints no scaffold (mint_scaffold returns "" on a 404)
+        # mailed "Or open it and talk it through:" with nothing after the colon. Reply-by-mail is
+        # the half that always exists; the button is the half that may not.
+        body = (_provenance(ctx, ctx.refs["uid"], to_attendee=False)
+                + report + "\n\n—\nRecorded by Vexa\n"
+                "Reply to this email with corrections or questions — I'll update what we hold "
+                "and answer here."
+                + (" Or open it and talk it through:" if link else ""))
         mid = notify(ctx.refs["organizer"], f"Minutes: {ctx.refs['title']}", body, link=link)
         mx.register_thread(db, mid, ctx.refs["uid"], f"meet-{ctx.refs['meeting_id']}")
         return Done({"message_id": mid, "link": link}, provider_ref=mid)
@@ -1665,6 +1686,12 @@ def build(reg: Registry, db) -> None:
             except Exception as e:  # noqa: BLE001 — one person never costs the rest theirs
                 failed = [f for f in failed if not f.startswith(a + ":")]
                 failed.append(f"{a}: {type(e).__name__}: {e}"[:240])
+                # A DOOR THIS DEPLOYMENT DOES NOT SERVE fails for EVERY person identically, and
+                # it is not a failure of the meeting — the mails have already gone out with the
+                # report in them. Remembered here so the all-failed branch below can tell that
+                # case from N genuine write failures.
+                if isinstance(e, ag.DoorAbsent):
+                    ctx.scratch["drop_door_absent"] = str(e)[:240]
             ctx.scratch["dropped"] = done
             ctx.scratch["drop_failed"] = failed
             ctx.checkpoint()      # same shape as the fan-out above: N round trips, one lease
@@ -1673,6 +1700,8 @@ def build(reg: Registry, db) -> None:
                          "entity": entity_path, "meeting_id": mid,
                          # every copy is these bytes plus that person's own link
                          "bytes": len(body)})
+        if ctx.scratch.get("drop_door_absent"):
+            return NotPresent("agent", detail=str(ctx.scratch["drop_door_absent"]))
         raise StepError(
             f"every desk drop failed for meeting {mid} ({len(room)} person(s) in the room): "
             + " · ".join(failed), retryable=True)
