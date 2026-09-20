@@ -169,7 +169,17 @@ the reaction's `reason`:**
 | 5 | `GET /api/workspace/file?slug=_global` → 403 for user 1 | per-user reads are scoped to own mounts; `_global` not among them | `mailtext.company_name` falls back to admin-api `/admin/instance` `company` |
 | 6 | patched flows code must run without an image rebuild | image bakes `/app/src` | `docker-compose.flows-src.yml` binds `core/flows/src` over `/app/src` (same pattern as `docker-compose.hot.yml`) |
 
-Model tier for the unattended run: Ollama `qwen3:1.7b`, 20k context, CPU — observed ~2.3 tokens/s
+**Second repair pass (with a workspace-scoped Anthropic key, 2026-09-20 afternoon):**
+
+| # | Symptom | Cause | Fix |
+| --- | --- | --- | --- |
+| 7 | API 400 "not scoped to a workspace" | the first key was organization-level | runtime forwards `ANTHROPIC_CUSTOM_HEADERS`; user issued a workspace-scoped key instead |
+| 8 | report not grounded, twice → reaction failed | `mcp__vexa__meeting_transcript` does not exist: `shared/tools.apply_tool_grant` has no caller, so no MCP server is attached to a turn | transcript goes into the kickoff (`mt.transcript_dialogue`); regrounding retry points at it |
+| 9 | `KeyError('transcript')` | bind-mounted source changed but the container kept the old module in memory | `restart`, not `up -d`, after a source-overlay edit |
+| 10 | `no scaffold could be minted … HTTP 404` | `POST /internal/scaffolds` absent from this agent-api | `mint_scaffold` returns `""` on 404; `email_minutes` builds its closing after the mint |
+| 11 | `every desk drop failed … HTTP 405` | `PUT /api/workspace/file` absent | new `agent.DoorAbsent`; `drop_to_attendees` returns `NotPresent` |
+
+Model tier for the earlier unattended run: Ollama `qwen3:1.7b`, 20k context, CPU — observed ~2.3 tokens/s
 generation. **Outcome:** the chain gate → prompt → dispatch → worker spawn → harness → Ollama
 `POST /v1/messages` is proven live (worker `vexa-worker-1-chat-meet-5` reached Ollama), but each
 harness request took ~5 min of prompt processing and timed out (Ollama logged 500 after 4m59s,
@@ -186,23 +196,24 @@ created nothing; the VM clone of the fork then failed with "could not read Usern
 (bot image alone 3.6 GB). Existing Docker data disk is 13.4 GB; large user folders: Downloads
 56.5 GB, `~/.cache` 25.1 GB, Temp 6.8 GB. Freeing space is the user's call.
 
-| R-006 (prep) | `./bin/phase1-replay --seed-only` on the VM | same + `bin/phase1-replay` | pass (seed half) | meeting id 2, 9 speaker-attributed segments; `GET /transcripts/by-id/2` with the user key returns 9 segments. Replay half not run: no model credential (D-7) |
+| R-006 (prep) | `./bin/phase1-replay --seed-only` on the VM | same + `bin/phase1-replay` | pass (seed half) | meeting id 2, 9 speaker-attributed segments; `GET /transcripts/by-id/2` with the user key returns 9 segments |
+| **R-006** | `./bin/phase1-replay` on the VM | 847b0f9f | **pass** | Reaction `done` ~35 s after admission. Mailpit holds 3 messages: `Minutes: …` to ethan@smaltai.com, `… — what it means for you` to priya@ and marco@. Body carries Summary / Decisions / Action items with owners+dates / Open questions / two verbatim quotes with speakers. Grounding gate passed. `drop_to_attendees` answers `agent:not_present` (no PUT workspace route in this cut) without failing the meeting |
 
 ## Handoff
 
-- Current task: T-9 (full replay) blocked on a usable model: the user's Anthropic key, or a GPU
-  host for the self-hosted path. Everything upstream of the model call is fixed and proven
-  (repair trail #1–#6). T-10 partially done (sign-in page renders; user signs in).
-- Completed work: T-1 through T-8; stack healthy on the VM; SMTP lane proven; seed proven;
-  gate open; prompt mounted; room fallback; workspace seeded; local Ollama + Whisper running.
-- Unverified areas: R-006 (minutes mailed to three recipients), R-007 sign-in, Whisper on real
-  speech (endpoint healthy only), quality of `behavior/prompts/process-meeting.md` on a real model.
-- Blockers: model. On the VM: `printf '%s' "$KEY" | ~/vexa/deploy/compose/bin/model-switch anthropic`
-  then `cd ~/vexa/deploy/compose && ./bin/phase1-replay`. For self-hosted: a g6.xlarge-class GPU
-  host running Ollama with a 20B–32B model, then `bin/model-switch local <model>`.
-- Current VM model settings: `ANTHROPIC_BASE_URL=http://ollama:11434`, model `qwen3:1.7b`
-  (the failed CPU test); `model-switch anthropic` clears them. Whisper is wired at
-  `TRANSCRIPTION_SERVICE_URL=http://whisper:8000` (base model, CPU).
+- Status: **phase 1 complete.** R-001 to R-006 pass; R-007 partial (sign-in page renders, the
+  user signs in themselves — the first sign-in claims the admin role).
+- Completed work: T-1 to T-9 and T-11. The replayed meeting produces minutes and mails them to
+  the organizer and both attendees, grounded in the transcript, in about 35 seconds.
+- Unverified areas: a LIVE meeting (bot joins a real call, Whisper transcribes real speech) —
+  the bot image is pulled and transcription is wired to the local Whisper, but no call has been
+  held; the branding is still Vexa's (phase 2); prompt quality on long/multilingual meetings.
+- Current VM model tier: workspace-scoped Anthropic API key (`ANTHROPIC_API_KEY`), no base-url
+  override. `bin/model-switch local <model>` switches to the local Ollama for a self-hosted test;
+  that needs a GPU host to be usable (CPU measured at ~2.3 tokens/s, harness times out).
+- Next phase (2, white-labeling): the attendee fallback for calendar meetings
+  (`_attendees` in production.py has no `participants` for a calendar-driven completion), the
+  `branding` settings key + admin UI, the Minutes/Recipients surfaces, the approval gate.
 - Committed on branch `phase-1` of the fork (commit 0630fea1, pushed 2026-09-20 at the user's
   request): `deploy/compose/docker-compose.mailpit.yml`, `deploy/compose/docker-compose.minio-quay.yml`,
   `deploy/compose/bin/phase1-replay`, this record. The VM checkout tracks the same branch.
