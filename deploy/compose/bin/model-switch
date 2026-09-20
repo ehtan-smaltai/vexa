@@ -23,7 +23,12 @@ _clear_local() {
 
 case "$MODE" in
   anthropic)
-    KEY=$(cat | tr -d '\r\n ')
+    # Accept either the bare key or a labelled line such as "Claude : sk-ant-..." (what a
+    # `findstr /b Claude keys.txt | ssh ...` from Windows cmd sends). Only the key is kept.
+    RAW=$(cat | tr -d '\r')
+    KEY=$(printf '%s\n' "$RAW" | grep -i '^claude' | head -1 | sed -E 's/^[Cc]laude[^:]*:[[:space:]]*//')
+    [ -n "$KEY" ] || KEY=$(printf '%s\n' "$RAW" | grep -m1 .)
+    KEY=$(printf '%s' "$KEY" | tr -d ' \n\t')
     [ -n "$KEY" ] || { echo "no key on stdin" >&2; exit 2; }
     _clear_local
     _set ANTHROPIC_API_KEY "$KEY"
