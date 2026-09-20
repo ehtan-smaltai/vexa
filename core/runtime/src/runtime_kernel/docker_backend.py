@@ -254,6 +254,9 @@ class DockerBackend:
             "ANTHROPIC_DEFAULT_OPUS_MODEL",
             "ANTHROPIC_DEFAULT_SONNET_MODEL",
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            # extra request headers the claude CLI adds ("Name: Value"); an organization-level
+            # API key needs `anthropic-workspace-id` on every call or the API answers 400.
+            "ANTHROPIC_CUSTOM_HEADERS",
         ):
             value = os.getenv(key)
             if value and key not in spawn_env:

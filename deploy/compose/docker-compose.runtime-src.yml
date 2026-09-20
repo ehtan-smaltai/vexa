@@ -1,0 +1,17 @@
+# docker-compose.runtime-src.yml — run the runtime from THIS checkout's source, and pass
+# ANTHROPIC_CUSTOM_HEADERS through to spawned agent workers.
+#
+# Why: an organization-level Anthropic API key (one not scoped to a workspace) is rejected with
+# "this request must include the anthropic-workspace-id header". The claude CLI adds arbitrary
+# headers from ANTHROPIC_CUSTOM_HEADERS ("Name: Value"), but the stock runtime does not forward
+# that variable into workers. core/runtime/src adds it to the copy list; this file binds that
+# source over the image and hands the variable to the runtime service.
+#
+#   ANTHROPIC_CUSTOM_HEADERS=anthropic-workspace-id: wrkspc_xxx     (in .env, via bin/model-switch)
+#   docker compose -p vexa-v012 -f docker-compose.yml -f docker-compose.runtime-src.yml up -d runtime
+services:
+  runtime:
+    volumes:
+      - ../../core/runtime/src:/app/src:ro
+    environment:
+      - ANTHROPIC_CUSTOM_HEADERS=${ANTHROPIC_CUSTOM_HEADERS:-}

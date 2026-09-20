@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # model-switch — point this stack's agent harness at one model backend and reload the services.
 #
-#   ./bin/model-switch anthropic          # Anthropic API. Reads the key from STDIN (never argv):
+#   ./bin/model-switch anthropic [KEY] [WORKSPACE_ID]
+#                                         # Anthropic API. Key from argv or STDIN:
 #                                         #   printf '%s' "$KEY" | ./bin/model-switch anthropic
+#                                         # WORKSPACE_ID (wrkspc_...) is needed only for an
+#                                         # organization-level key; it is sent as the
+#                                         # anthropic-workspace-id header on every request.
 #   ./bin/model-switch local qwen3:32b    # a model served by the local Ollama (docker-compose.localai.yml)
 #   ./bin/model-switch show               # print the current (non-secret) model settings
 #
@@ -36,7 +40,14 @@ case "$MODE" in
     [ -n "$KEY" ] || { echo "no key on stdin" >&2; exit 2; }
     _clear_local
     _set ANTHROPIC_API_KEY "$KEY"
-    echo "→ Anthropic API selected (key ${#KEY} chars, not shown)"
+    WS="${3:-}"
+    if [ -n "$WS" ]; then
+      _set ANTHROPIC_CUSTOM_HEADERS "anthropic-workspace-id: ${WS}"
+      echo "→ Anthropic API selected (key ${#KEY} chars, not shown; workspace ${WS})"
+    else
+      _set ANTHROPIC_CUSTOM_HEADERS ""
+      echo "→ Anthropic API selected (key ${#KEY} chars, not shown)"
+    fi
     ;;
   local)
     MODEL="${2:?model name, e.g. qwen3:32b}"
