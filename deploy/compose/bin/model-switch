@@ -25,7 +25,9 @@ case "$MODE" in
   anthropic)
     # Accept either the bare key or a labelled line such as "Claude : sk-ant-..." (what a
     # `findstr /b Claude keys.txt | ssh ...` from Windows cmd sends). Only the key is kept.
-    RAW=$(cat | tr -d '\r')
+    # The key may also be passed as the second argument (`model-switch anthropic <key>`) for
+    # shells where piping into ssh is awkward (Windows cmd). Stdin is read only when it is not.
+    if [ -n "${2:-}" ]; then RAW="$2"; else RAW=$(cat | tr -d '\r'); fi
     KEY=$(printf '%s\n' "$RAW" | grep -i '^claude' | head -1 | sed -E 's/^[Cc]laude[^:]*:[[:space:]]*//')
     [ -n "$KEY" ] || KEY=$(printf '%s\n' "$RAW" | grep -m1 .)
     KEY=$(printf '%s' "$KEY" | tr -d ' \n\t')
