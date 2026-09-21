@@ -1,0 +1,13 @@
+# docker-compose.terminal-src.yml — build the terminal from THIS checkout.
+#
+# The terminal is a Next.js app served from a production build, so unlike the Python services it
+# cannot be source-overlaid: a change under src/ needs `next build` before anything serves it.
+# This file points the service at a LOCAL tag so a development build can never shadow the
+# published `vexaai/v012-terminal:v012` pointer (the same rule `make bot` follows, and what
+# `make -C deploy/compose digest-audit` checks for).
+#
+#   docker compose -p vexa-v012 -f docker-compose.yml -f docker-compose.terminal-src.yml build terminal
+#   docker compose -p vexa-v012 -f docker-compose.yml -f docker-compose.terminal-src.yml up -d terminal
+services:
+  terminal:
+    image: vexa/terminal:dev

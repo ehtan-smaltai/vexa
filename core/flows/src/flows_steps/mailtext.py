@@ -55,9 +55,12 @@ WORKSPACE_WORD = "desk"
 # WHO CAN SEE WHAT, in the founder's own words. It goes into the mails a person reads before they
 # have decided whether to keep anything here, because that is the only moment at which telling them
 # is a choice they still have. Not a disclaimer and not a legal line: three facts.
-VISIBILITY_SENTENCE = ("Vexa runs on this organisation's own servers; what you and your colleagues "
-                       "keep in your workspaces is visible to the company's agents; recordings and "
-                       "transcripts stay here.")
+# `{product}` is filled by `render` from the deployment's branding — the sentence is fixed, the
+# NAME in it is not. A white-labelled deployment that told a stranger "Vexa runs on this
+# organisation's own servers" would be naming a product that person has never been offered.
+VISIBILITY_SENTENCE = ("{product} runs on this organisation's own servers; what you and your "
+                       "colleagues keep in your workspaces is visible to the company's agents; "
+                       "recordings and transcripts stay here.")
 
 # The company half's fallback. If this string ever reaches a recipient it is a BUG in the gate --
 # no mail should send at all while the company layer is missing -- so it is written to be
@@ -91,12 +94,12 @@ DEFAULTS: dict[str, str] = {
     "attendee-head": (
         "subject: {{meeting}} — what it means for you\n"
         "---\n"
-        "I am Vexa, the meeting assistant at {{company}}. I sit in meetings you are invited to; "
+        "I am {{product}}, the meeting assistant at {{company}}. I sit in meetings you are invited to; "
         "afterwards you get what came out of them and what they leave on your plate.\n"
         "\n"
         "{{organizer}} had me in {{meeting}} on {{date}}. This is now on your desk.\n"
         "\n"
-        "Vexa runs on this organisation's own servers; what you and your colleagues keep in your "
+        "{{product}} runs on this organisation's own servers; what you and your colleagues keep in your "
         "workspaces is visible to the company's agents; recordings and transcripts stay here.\n"
     ),
 }
@@ -110,7 +113,9 @@ def mailbox_address() -> str:
     the inbound poller answers as, so the sentence we tell people to use and the mailbox we read
     cannot drift apart: there is one value and both sides take it from there."""
     import os
-    return (os.environ.get("VEXA_MAIL_ADDR") or "").strip() or "the Vexa mailbox for this deployment"
+    from . import branding
+    return ((os.environ.get("VEXA_MAIL_ADDR") or "").strip()
+            or f"the {branding.product_name()} mailbox for this deployment")
 
 
 def company_name(uid: str) -> str:
@@ -175,8 +180,16 @@ def render(name: str, uid: str, values: Optional[dict] = None) -> tuple[str, str
     if raw is None:
         raise KeyError(f"no mail template named {name!r} (baked or in _global/mail/)")
     subject, body = _split(raw)
-    fill = {"company": company_name(uid), "service": SERVICE_SENTENCE,
-            "visibility": VISIBILITY_SENTENCE, "workspace": WORKSPACE_WORD,
+    from . import branding
+    product = branding.product_name()
+    fill = {"company": company_name(uid), "service": SERVICE_SENTENCE.format(product=product),
+            "visibility": VISIBILITY_SENTENCE.format(product=product),
+            # WHAT THIS DEPLOYMENT IS CALLED, filled here so no template carries the product's
+            # name as a literal. A white-labelled deployment renames itself in one settings write
+            # and every sentence this directory sends follows — which is the difference between
+            # branding and find-and-replace across a content tree.
+            "product": product,
+            "workspace": WORKSPACE_WORD,
             "mailbox": mailbox_address(), **(values or {})}
     for key, val in fill.items():
         token = re.compile(r"\{\{\s*" + re.escape(key) + r"\s*\}\}")

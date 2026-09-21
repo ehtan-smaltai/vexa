@@ -19,6 +19,7 @@ exercises:
 """
 import hmac
 import os
+import re
 import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -256,6 +257,10 @@ class CalendarPatch(BaseModel):
 # platform defaults live in platform_settings rows "models" / "transcription". Effective config
 # resolves FIELD-BY-FIELD user > platform; the process env stays the bottom fallback downstream
 # (dispatch/bot_spawn only override what is set here).
+# The accent's whole vocabulary — see `_validate_config_fields`. Three, four, six or eight hex
+# digits, which is every form a colour input emits.
+_HEX_COLOR = re.compile(r"#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})")
+
 MODEL_MODES = ("subscription", "custom")
 _MODELS_FIELDS = ("mode", "model", "meeting_model", "base_url", "api_key", "effort")
 _TRANSCRIPTION_FIELDS = ("url", "token")
@@ -280,9 +285,26 @@ _DIAGNOSTICS_FIELDS = ("capture_signal",)
 # agent-api's verifier (POST /api/global/ready), which reads the files and the commit before it
 # flips anything: nothing may mark itself ready.
 _GLOBAL_SETUP_FIELDS = ("state", "company", "completed_at")
+# "branding" is WHAT THIS DEPLOYMENT IS CALLED, in the three places a person meets it: the
+# workbench (name, logo, accent), the meeting (the bot's display name in the participant list) and
+# the mail (the From name and the footer's support address). One key, read at RUNTIME by every
+# surface, so renaming a deployment is a settings write and never an image rebuild — the
+# NEXT_PUBLIC_DEFAULT_BOT_NAME build arg and the hardcoded `Vexa <addr>` From header are exactly
+# the two costs this key removes.
+#
+# NOT HERE, DELIBERATELY: the sentences. What the assistant SAYS when it introduces itself lives
+# in the behavior tree (`_global/mail/attendee-head.md`, falling back to `mailtext.DEFAULTS`),
+# which is git-backed, reviewable and already hot-read per send. A second home for the same words
+# is the drift `behavior/mail/README.md` was written to prevent. This key carries NAMES, not prose.
+#
+# `powered_by` is a STRING like every other field ("false" to hide the "Built on Vexa" footer
+# line, "" to clear back to the default of showing it) because `_validate_config_fields` has one
+# rulebook and it is string-only.
+_BRANDING_FIELDS = ("product_name", "accent", "logo_url", "bot_name", "sender_name",
+                    "support_email", "powered_by")
 SETTING_KEYS = {"models": _MODELS_FIELDS, "transcription": _TRANSCRIPTION_FIELDS,
                 "setup": _SETUP_FIELDS, "diagnostics": _DIAGNOSTICS_FIELDS,
-                "global_setup": _GLOBAL_SETUP_FIELDS}
+                "global_setup": _GLOBAL_SETUP_FIELDS, "branding": _BRANDING_FIELDS}
 
 # One vocabulary for the gate, so no caller invents its own spelling of "not ready".
 GLOBAL_SETUP_COMPLETED = "completed"
@@ -345,11 +367,18 @@ def _validate_config_fields(update: dict, *, kind: str) -> dict:
         if field == "mode" and value not in MODEL_MODES:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                                 detail=f"mode must be one of {sorted(MODEL_MODES)}")
-        if field in ("base_url", "url"):
+        if field in ("base_url", "url", "logo_url"):
             parsed = urlparse(value)
             if parsed.scheme not in ("http", "https") or not parsed.hostname:
                 raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                                     detail=f"{field} must be an http(s) URL")
+        # THE ACCENT IS PAINTED INTO A PAGE, so it is checked as a colour rather than taken on
+        # trust: this value reaches the browser as a CSS custom property, and an unvalidated
+        # string there is a style-injection sink (`--accent: red; } html { … }`). A strict hex
+        # is the whole vocabulary the picker emits and the whole vocabulary a page needs.
+        if field == "accent" and not _HEX_COLOR.fullmatch(value):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                detail="accent must be a hex colour like #1F6F5F")
         cleaned[field] = value
     return cleaned
 
@@ -1235,9 +1264,18 @@ def create_app() -> FastAPI:
         _check_internal(request)
         user = await _load_user(user_id, db)
         data = user.data if isinstance(user.data, dict) else {}
+        # THE NAME IN THE PARTICIPANT LIST, resolved person > deployment > stock. The middle tier
+        # is new: it used to fall straight from this person's own calendar setting to the literal
+        # "Vexa", so a white-labelled deployment renamed every surface except the one its
+        # customers' guests actually stare at for an hour. `branding` is this service's own
+        # platform setting, so it is read from the row rather than asked for over HTTP.
+        _brand = await _platform_setting("branding", db)
         resp: dict = {
             "max_concurrent": user.max_concurrent_bots,
-            "bot_name": data.get("calendar_bot_name") or "Vexa",
+            "bot_name": (data.get("calendar_bot_name")
+                         or str(_brand.get("bot_name") or "").strip()
+                         or str(_brand.get("product_name") or "").strip()
+                         or "Vexa"),
         }
         # Fixture collection (O-TEL-1): whether this spawn tapes its raw captured-signal stream.
         # ALWAYS present in the response — a missing key downstream is indistinguishable from an

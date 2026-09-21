@@ -12,11 +12,16 @@
  *  direct entry with an honest banner naming the OAuth upgrade path. */
 import { useEffect, useState, type FormEvent } from "react";
 import { signIn } from "next-auth/react";
+import { Mark, useBranding } from "../branding/useBranding";
 
 type Status = "checking" | "out" | "in";
 type Providers = { google: boolean; microsoft: boolean };
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
+  // THE FIRST SCREEN IS THE ONE THAT MOST NEEDS THE DEPLOYMENT'S OWN NAME, which is why
+  // /api/branding is readable before sign-in — see that route for what that does and does not
+  // expose.
+  const brand = useBranding();
   const [status, setStatus] = useState<Status>("checking");
   const [providers, setProviders] = useState<Providers>({ google: false, microsoft: false });
   const [adminExists, setAdminExists] = useState(true); // fail-safe: plain sign-in until told otherwise
@@ -81,16 +86,15 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/vexa-logo.svg" alt="Vexa" width={28} height={28} style={{ borderRadius: 8, display: "block", flex: "none" }} />
+          <Mark brand={brand} size={28} />
           <div style={{ fontSize: 15, fontWeight: 600, color: "var(--t1)" }}>
-            {claiming ? "Set up your instance" : "Vexa Terminal"}
+            {claiming ? "Set up your instance" : `${brand.productName} Terminal`}
           </div>
         </div>
         {claiming ? (
           <>
             <div style={{ fontSize: 12, color: "var(--t3)", lineHeight: 1.5 }}>
-              This Vexa instance has no administrator yet. The first sign-in becomes the admin and can
+              This {brand.productName} instance has no administrator yet. The first sign-in becomes the admin and can
               configure models, transcription, and other users.
             </div>
             <div

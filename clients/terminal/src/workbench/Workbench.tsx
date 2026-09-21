@@ -30,6 +30,7 @@ import { isOwnedPath, meetingIdFromPath, meetingPath } from "../app/meetingRoute
 import { OPEN_ENTITY_EVENT } from "../canvas/actions";
 import { useTheme } from "../app/theme";
 import { meetingsOnly } from "../app/mode";
+import { Mark, useBranding } from "../branding/useBranding";
 
 // ── theme toggle: dark ⇄ day mode, icon button in the profile row ──
 function ThemeToggle() {
@@ -148,6 +149,7 @@ const dvTabComponents = { default: TabHeader };
 
 // ── LEFT pane: brand + segmented list switcher + active list ─────────────────────
 function LeftPane() {
+  const brand = useBranding();
   const layout = useService(LayoutServiceId);
   const { activeList } = useStore(layout.store);
   // re-render on LATE registrations (e.g. the admin surface appears after its async gate check)
@@ -182,9 +184,8 @@ function LeftPane() {
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--sidebar)", borderRight: "1px solid var(--line)", minHeight: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "12px 14px 8px", flex: "none" }}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/vexa-logo.svg" alt="Vexa" width={24} height={24} style={{ borderRadius: 7, display: "block", flex: "none" }} />
-        <span style={{ fontSize: 13, fontWeight: 500, color: "var(--t1)" }}>Vexa <span style={{ fontWeight: 400, color: "var(--t3)" }}>terminal</span></span>
+        <Mark brand={brand} size={24} />
+        <span style={{ fontSize: 13, fontWeight: 500, color: "var(--t1)" }}>{brand.productName} <span style={{ fontWeight: 400, color: "var(--t3)" }}>terminal</span></span>
       </div>
       {/* stacked vertically — every list is visible at any sidebar width (no horizontal
           overflow/scroll), matching the file-tree rows below */}

@@ -60,6 +60,7 @@ from flows_steps import agent as ag
 from flows_steps import emailx as mx          # thread bookkeeping + the iMIP calendar reply only
 from flows_steps import meeting as mt
 from flows_steps import mailtext
+from flows_steps import branding as _brand
 # NOT `from … import UI_URL`. That name is a REQUIRED-EXPLICIT door served by `common`'s PEP-562
 # `__getattr__`, so importing it resolves the door AT IMPORT — the exact thing `_door` resolves at
 # access time to avoid ("a constant binds whatever the environment said at import"). One
@@ -1161,7 +1162,7 @@ def build(reg: Registry, db) -> None:
         # mailed "Or open it and talk it through:" with nothing after the colon. Reply-by-mail is
         # the half that always exists; the button is the half that may not.
         body = (_provenance(ctx, ctx.refs["uid"], to_attendee=False)
-                + report + "\n\n—\nRecorded by Vexa\n"
+                + report + f"\n\n—\nRecorded by {_brand.product_name()}\n"
                 "Reply to this email with corrections or questions — I'll update what we hold "
                 "and answer here."
                 + (" Or open it and talk it through:" if link else ""))
@@ -1227,11 +1228,11 @@ def build(reg: Registry, db) -> None:
                 when = ""
         who = (ctx.flow.param("data_statement") if ctx.flow else None) or \
             os.environ.get("VEXA_FLOWS_DATA_STATEMENT") or \
-            "Vexa runs on this organisation's own servers; the recording and transcript stay there."
+            f"{_brand.product_name()} runs on this organisation's own servers; the recording and transcript stay there."
         if to_attendee:
-            first = f"You were in {title}{when}. {organizer} had Vexa in the room, so these are the notes."
+            first = f"You were in {title}{when}. {organizer} had {_brand.product_name()} in the room, so these are the notes."
         else:
-            first = f"You had Vexa in {title}{when}."
+            first = f"You had {_brand.product_name()} in {title}{when}."
         # The opt-out sentence that used to close this line is GONE. Measured: it lifted opening
         # 61.9% -> 84.1% and quadrupled explicit opt-out, 6.3% -> 27.0%, while action stayed
         # inside noise — it converted silent ignoring into deliberate leaving. Whether to put an
@@ -1265,7 +1266,7 @@ def build(reg: Registry, db) -> None:
         box = os.environ.get("VEXA_MAIL_ADDR", "").strip()
         if not box:
             return ""
-        return ("\nWant Vexa in a meeting of your own? Forward its calendar invite to "
+        return (f"\nWant {_brand.product_name()} in a meeting of your own? Forward its calendar invite to "
                 f"{box}.\n")
 
 
@@ -1610,7 +1611,7 @@ def build(reg: Registry, db) -> None:
             "",
             f"# {title}",
             "",
-            f"{date_prose} — {organizer} had Vexa in the room.",
+            f"{date_prose} — {organizer} had {_brand.product_name()} in the room.",
             "",
             (report or "").strip(),
             "",

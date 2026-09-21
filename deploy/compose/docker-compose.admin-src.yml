@@ -1,0 +1,13 @@
+# docker-compose.admin-src.yml — run admin-api from THIS checkout's source.
+#
+# The sibling of docker-compose.flows-src.yml, for the identity service: bind
+# core/identity/services/admin-api/src over the image's /app/src so a change to the settings
+# vocabulary is live on the next container start rather than after an image build. Development
+# and evaluation only — a release runs the published bytes.
+#
+# RESTART, NOT `up -d`, after editing: compose sees no config change and leaves the old module
+# loaded in memory otherwise.
+services:
+  admin-api:
+    volumes:
+      - ../../core/identity/services/admin-api/src:/app/src:ro

@@ -11,11 +11,14 @@ import { GitHubTokenCard, TokensPanel } from "./tokens";
 import { presentError } from "./apiClient";
 import { CalendarConnectionsPanel } from "./calendarConnections";
 import { getModelPrefs, setModelPrefs, getTranscriptionPrefs, setTranscriptionPrefs, getGlobalSetting, setGlobalSetting, testModels, testTranscription, type ConfigTestResult } from "./settingsApi";
+import { Mark, useBranding, invalidateBranding, applyAccent, applyTitle } from "../branding/useBranding";
+import { fromSetting } from "../branding/branding";
 
-type SectionId = "calendar" | "models" | "tokens" | "github" | "account";
+type SectionId = "calendar" | "models" | "branding" | "tokens" | "github" | "account";
 const SECTIONS: Array<{ id: SectionId; label: string; icon: string }> = [
   { id: "calendar", label: "Calendar", icon: "cal" },
   { id: "models", label: "Models", icon: "spark" },
+  { id: "branding", label: "Branding", icon: "spark" },
   { id: "tokens", label: "API tokens", icon: "key" },
   { id: "github", label: "GitHub", icon: "github" },
   { id: "account", label: "Account", icon: "user" },
@@ -195,6 +198,78 @@ function ModelsSection() {
   );
 }
 
+/** Branding — ADMIN ONLY, and the whole deployment at once: there is no per-user brand, because a
+ *  product cannot be called two things in one instance. Same admin probe as the global models card
+ *  (a 404 from /api/admin/settings is what "not an admin" looks like), same ConfigForm, same
+ *  empty-means-default contract.
+ *
+ *  Saving invalidates the shared branding cache and repaints immediately, so the header and the
+ *  accent change under the admin's hands rather than at the next reload — a rename you cannot see
+ *  take effect is a rename you do twice. */
+function BrandingSection() {
+  const brand = useBranding();
+  const [admin, setAdmin] = useState<boolean | null>(null);
+  useEffect(() => {
+    let on = true;
+    getGlobalSetting("branding").then((v) => on && setAdmin(v !== null)).catch(() => on && setAdmin(false));
+    return () => { on = false; };
+  }, []);
+
+  const fields = [
+    { key: "product_name", label: "Product name", placeholder: "Vexa" },
+    { key: "accent", label: "Accent colour", placeholder: "#D8855C" },
+    { key: "logo_url", label: "Logo URL", placeholder: "https://… (square, 256px+; blank uses the initial)" },
+    { key: "bot_name", label: "Bot name in meetings", placeholder: "defaults to the product name" },
+    { key: "sender_name", label: "Email sender name", placeholder: "defaults to the product name" },
+    { key: "support_email", label: "Support address", placeholder: "shown in the mail footer" },
+    { key: "powered_by", label: "Attribution footer", options: [
+      { value: "", label: "Show “Built on Vexa”" },
+      { value: "false", label: "Hide it" },
+    ] },
+  ];
+  const head: CSSProperties = { fontSize: 12, fontWeight: 600, color: "var(--t1)", margin: "14px 0 6px" };
+
+  if (admin === null) return <div style={{ fontSize: 11, color: "var(--t3)" }}>Checking…</div>;
+  if (!admin) {
+    return (
+      <div style={{ fontSize: 11, color: "var(--t3)", lineHeight: 1.5, maxWidth: 460 }}>
+        Branding is set by this instance&rsquo;s administrator.
+      </div>
+    );
+  }
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: "var(--t3)", lineHeight: 1.5, marginBottom: 12, maxWidth: 460 }}>
+        What your people, the bot in the meeting, and everyone who receives minutes will see.
+        Applies to the whole deployment and takes effect without a restart. What the assistant
+        <em> says</em> when it introduces itself is edited in the mail templates, not here.
+      </div>
+      <div style={head}>Identity</div>
+      <ConfigForm fields={fields}
+        load={async () => (await getGlobalSetting("branding")) ?? {}}
+        save={async (u) => {
+          const saved = await setGlobalSetting("branding", u);
+          invalidateBranding();
+          // Repaint now rather than on the next load — see this section's own docstring.
+          const next = fromSetting(saved as Record<string, unknown>);
+          applyAccent(next.accent);
+          applyTitle(next.productName);
+          return saved;
+        }} />
+      <div style={head}>Preview</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", border: "1px solid var(--line)", borderRadius: 8, background: "var(--panel2)", maxWidth: 460 }}>
+        <Mark brand={brand} size={26} />
+        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--t1)" }}>{brand.productName}</span>
+        <span style={{ marginLeft: "auto", fontSize: 11, padding: "5px 10px", borderRadius: 6, background: "var(--accent)", color: "var(--on-accent)" }}>Sign in</span>
+      </div>
+      <div style={{ fontSize: 11, color: "var(--t3)", marginTop: 8, maxWidth: 460, lineHeight: 1.5 }}>
+        In the meeting the bot appears as <b style={{ color: "var(--t2)" }}>{brand.botName}</b>; minutes
+        arrive from <b style={{ color: "var(--t2)" }}>{brand.senderName}</b>.
+      </div>
+    </div>
+  );
+}
+
 function AccountSection() {
   const [user, setUser] = useState<{ email?: string | null; name?: string | null } | null>(null);
   useEffect(() => {
@@ -219,6 +294,7 @@ function SettingsView() {
   const bodies: Record<SectionId, ReactNode> = {
     calendar: <CalendarConnectionsPanel />,
     models: <ModelsSection />,
+    branding: <BrandingSection />,
     tokens: <TokensPanel />,
     github: <GitHubTokenCard />,
     account: <AccountSection />,

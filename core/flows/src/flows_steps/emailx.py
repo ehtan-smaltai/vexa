@@ -72,7 +72,19 @@ def _smtp():
 def send(to: str, subject: str, body: str, *, in_reply_to: str | None = None) -> str:
     addr, pw = creds(login=_needs_login())
     m = EmailMessage()
-    m["From"], m["To"], m["Subject"] = f"Vexa <{addr}>", to, subject
+    # THE DISPLAY NAME IS A DEPLOYMENT FACT, not a literal. It was `Vexa`, hardcoded, which meant
+    # a white-labelled deployment could rename every surface a person sees except the one that
+    # arrives in their inbox — the single most-seen name the product has. `branding.sender_name`
+    # reads the same `branding` platform setting the terminal header does, cached, and falls back
+    # to the stock name on any failure. The ADDRESS is untouched: that is the mailbox this
+    # deployment actually watches (`VEXA_MAIL_ADDR`) and no setting may contradict it.
+    from email.headerregistry import Address
+    from . import branding
+    local, _, domain = addr.partition("@")
+    # `Address` rather than an f-string: a display name carrying a comma, a quote or a non-ASCII
+    # character is a header-injection sink, and this value is operator-supplied text.
+    m["From"] = Address(display_name=branding.sender_name(), username=local, domain=domain)
+    m["To"], m["Subject"] = to, subject
     m["Message-ID"] = email.utils.make_msgid(domain=addr.split("@")[1])
     if in_reply_to:
         m["In-Reply-To"] = m["References"] = in_reply_to

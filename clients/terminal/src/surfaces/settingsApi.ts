@@ -55,7 +55,7 @@ export async function setTranscriptionPrefs(update: { url?: string; token?: stri
 
 /** The admin-writable platform-settings keys: the two config domains + the first-run wizard's
  *  durable "setup" state. */
-export type GlobalSettingKey = "models" | "transcription" | "setup";
+export type GlobalSettingKey = "models" | "transcription" | "setup" | "branding";
 
 /** null ⇒ caller is not an admin (the route 404s) — the global card simply doesn't render. */
 export async function getGlobalSetting(key: GlobalSettingKey): Promise<GlobalSetting | null> {
