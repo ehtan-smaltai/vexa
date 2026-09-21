@@ -925,6 +925,17 @@
    ]
   },
   {
+   "unique-id": "terminal-branding",
+   "node-type": "module",
+   "name": "terminal/branding",
+   "description": "deployment identity — name, mark, accent, read at runtime (terminal)",
+   "metadata": [
+    {
+     "path": "clients/terminal/src/branding"
+    }
+   ]
+  },
+  {
    "unique-id": "terminal-canvas",
    "node-type": "module",
    "name": "terminal/canvas",
@@ -1655,6 +1666,7 @@
      "container": "terminal",
      "nodes": [
       "terminal-app",
+      "terminal-branding",
       "terminal-canvas",
       "terminal-contributions",
       "terminal-platform",
