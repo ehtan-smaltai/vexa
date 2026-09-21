@@ -9,6 +9,12 @@
 # Run on the compose host, from deploy/compose:
 #   ./bin/phase1-replay --seed-only      # seed + readability check, no reaction
 #   ./bin/phase1-replay                  # seed + admit + wait + list Mailpit
+#   REPLAY_UID=7 REPLAY_KEY=vxa_… ./bin/phase1-replay
+#                                        # seed the meeting for ANOTHER user, with that user's own
+#                                        # gateway key. Defaults to user 1 and ~/api-key.txt. Use
+#                                        # it to give a second signed-in account something to look
+#                                        # at, or to exercise the per-subject scoping of the
+#                                        # minutes projection with more than one person's rows.
 #   ./bin/phase1-replay --calendar       # as a CALENDAR meeting: the admitted fact carries NO
 #                                        # participants and no names, exactly what meeting-api
 #                                        # publishes when a meeting came from an ICS feed rather
@@ -22,7 +28,8 @@ set -euo pipefail
 SEED_ONLY=0; [ "${1:-}" = "--seed-only" ] && SEED_ONLY=1
 CALENDAR=0; [ "${1:-}" = "--calendar" ] && CALENDAR=1
 C=$(cat ~/compose-cmd.txt)
-KEY=$(cat ~/api-key.txt)
+UID_="${REPLAY_UID:-1}"
+KEY="${REPLAY_KEY:-$(cat ~/api-key.txt)}"
 _envv() { grep -E "^$1=" .env | head -1 | cut -d= -f2- | tr -d '[:space:]'; }
 FLOWS_KEY=$(_envv VEXA_FLOWS_API_KEY)
 GW=http://127.0.0.1:${API_GATEWAY_HOST_PORT:-18056}
@@ -31,14 +38,14 @@ MAILPIT=http://127.0.0.1:${MAILPIT_UI_PORT:-18025}
 TS=$(date +%s)
 NATIVE="replay-${TS}"
 TITLE="Q3 pricing review (replay ${TS})"
-ORG="ethan@smaltai.com"
+ORG="${REPLAY_ORG:-ethan@smaltai.com}"
 A1="priya@local.test"; A2="marco@local.test"
 
 psql() { $C exec -T postgres psql -U postgres -d vexa -v ON_ERROR_STOP=1 -qtA "$@"; }
 
-echo "→ seeding meeting ${NATIVE} for user 1"
+echo "→ seeding meeting ${NATIVE} for user ${UID_}"
 MID=$(psql -c "INSERT INTO meetings (user_id, platform, platform_specific_id, status, start_time, end_time, data)
-VALUES (1, 'google_meet', '${NATIVE}', 'completed', now() - interval '45 minutes', now() - interval '3 minutes',
+VALUES (${UID_}, 'google_meet', '${NATIVE}', 'completed', now() - interval '45 minutes', now() - interval '3 minutes',
  jsonb_build_object('name', '${TITLE}', 'completion_reason', 'replay',
    'attendees', jsonb_build_array(
      jsonb_build_object('email','${ORG}','name','Ethan','partstat','accepted'),
@@ -94,10 +101,10 @@ if [ "$CALENDAR" = 1 ]; then
   # EXACTLY what meeting-api publishes (events.meeting_completed_refs): no invite, so no
   # participants, no names, no organizer, no title. Everything else must be resolved downstream.
   echo "→ admitting meeting.completed (${SRC}) as a CALENDAR meeting — no participants in the fact"
-  REFS='{"uid":"1","meeting_id":"'"${MID}"'","native":"'"${NATIVE}"'","platform":"google_meet","completion_reason":"replay"}'
+  REFS='{"uid":"'"${UID_}"'","meeting_id":"'"${MID}"'","native":"'"${NATIVE}"'","platform":"google_meet","completion_reason":"replay"}'
 else
   echo "→ admitting meeting.completed (${SRC}) into flows-api"
-  REFS='{"uid":"1","meeting_id":"'"${MID}"'","native":"'"${NATIVE}"'","platform":"google_meet",
+  REFS='{"uid":"'"${UID_}"'","meeting_id":"'"${MID}"'","native":"'"${NATIVE}"'","platform":"google_meet",
          "organizer":"'"${ORG}"'","title":"'"${TITLE}"'","completion_reason":"replay",
          "participants":["'"${ORG}"'","'"${A1}"'","'"${A2}"'"],
          "participant_names":{"'"${A1}"'":"Priya Raman","'"${A2}"'":"Marco Bellini","'"${ORG}"'":"Ethan"}}'

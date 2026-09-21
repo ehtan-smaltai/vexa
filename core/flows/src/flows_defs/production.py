@@ -918,6 +918,15 @@ def build(reg: Registry, db) -> None:
             # so it lands as the same terminal `not_present` an absent agent domain does — never as
             # an exception, and never as a turn dispatched with an empty instruction, which would
             # bill a model to produce a report nobody could ground.
+            # THE ORGANISER'S WORKSPACE MUST EXIST BEFORE A TURN IS DISPATCHED INTO IT. The
+            # runtime mounts `<workspaces>/<uid>` as a named-volume SUBPATH, and Docker refuses a
+            # container whose mount source is not there — so for a person whose desk has never
+            # been seeded (anyone whose first meeting this is) agent-api answered 500 and the
+            # whole lane retried until it gave up. `drop_to_attendees` already seeds every
+            # ATTENDEE's desk for exactly this reason; the organiser was the one person nothing
+            # seeded, because their turn runs first. Idempotent by contract, so it costs an
+            # existing user one no-op call.
+            ag.workspace_init(uid)
             # THE ROW ID FIRST, because both the kick and the room need it. It used to be resolved
             # four statements below, which was fine while nothing before it read the transcript.
             # `refs["meeting_id"]` may still be a native id from `meeting_ref()`; only the row id

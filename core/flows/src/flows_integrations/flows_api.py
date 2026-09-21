@@ -109,6 +109,8 @@ from flows_timeline import (REACTION_FOUND, REACTION_MISSING,  # noqa: E402
                             build_timeline, fetch_meetings, friction_for_subject,
                             reaction_concerns, render_preamble, render_text)
 from flows_timeline import list_reactions as reactions_for  # noqa: E402
+from flows_timeline import list_minutes as minutes_for  # noqa: E402
+from flows_timeline import read_minutes as one_minutes  # noqa: E402
 from flows_timeline.model import to_epoch as _friction_since_epoch  # noqa: E402
 
 #: The placeholder literals to fall back on when the declaration cannot be read. DELIBERATELY the
@@ -642,6 +644,48 @@ def set_flow_status(name: str, version: int, action: str):
     if not rows:
         raise HTTPException(status_code=404, detail="flow version not found")
     return {"name": name, "version": version, "status": st}
+
+
+@app.get("/minutes")
+def list_minutes(limit: int = 50, subject: str = "",
+                 caller: Caller = Depends(subject_or_operator)):
+    """WHAT THIS PERSON'S MEETINGS PRODUCED — one entry per meeting that ran the minutes lane,
+    newest first, each with who the minutes went to and what happened to each of them.
+
+    A READ over receipts the lane already wrote (`flows_timeline.minutes`): the report, the
+    organiser's message id, the attendee fan-out and the desk copies. Nothing new is stored, and
+    delivery is a fact with an SMTP message-id behind it rather than an assumption.
+
+    SCOPED LIKE `/reactions`, and by the same pair: the subject is DERIVED from the caller's own
+    credential, an operator must name one, and a person who answers to nothing gets `unresolved`
+    rather than somebody else's meetings.
+
+    The report itself is NOT in this projection — it is the largest field by an order of magnitude
+    and a list shows none of it. `GET /minutes/{meeting_id}` carries it for the one a person opened.
+    """
+    subj = scoped_subject(caller, subject)
+    rows = minutes_for(db, subject=subj, limit=max(1, min(int(limit), 200)),
+                       identity=_as_me(caller))
+    if rows is None:
+        return {"minutes": [], "subject": subj, "unresolved": True}
+    return {"subject": subj, "minutes": rows}
+
+
+@app.get("/minutes/{meeting_id}")
+def read_minutes(meeting_id: str, subject: str = "",
+                 caller: Caller = Depends(subject_or_operator)):
+    """ONE meeting's minutes and its recipients — the report verbatim, plus every address the
+    lane mailed and what happened to it.
+
+    404 COVERS BOTH "no such meeting" AND "not yours", deliberately. Separating them would answer
+    whether somebody else's meeting exists to anybody who can guess an id, and the caller's fix is
+    the same either way.
+    """
+    subj = scoped_subject(caller, subject)
+    row = one_minutes(db, meeting_id, subject=subj, identity=_as_me(caller))
+    if row is None:
+        raise HTTPException(status_code=404, detail="no minutes for that meeting")
+    return row
 
 
 @app.get("/reactions")

@@ -15,6 +15,7 @@ import "./chat";       // right-rail Chat export + /-skills          (commands g
 import "./sessions";   // list "sessions" (→ focuses right-rail chat) (gated in meetings mode)
 import "./entities";   // EntityList helpers
 import "./meeting";    // list "meetings" + tab-kind "meeting"
+import "./minutes";    // list "minutes" + tab-kind "minutes" — what a meeting produced + who received it
 import "./meetingPrep"; // tab-kind "meetingPrep" — a planned meeting's prep/share hub
 import "./today";      // tab-kind "today" — the Meetings click target (the user's day)
 import "./canvas";     // tab-kind "canvas" + command "Open Meeting Canvas"

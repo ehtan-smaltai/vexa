@@ -10,6 +10,7 @@ from __future__ import annotations
 from flows_timeline.model import (EVENT_KINDS, STEP_KINDS, Event, concerns, event_from_meeting,
                                   event_from_receipt, events_from_reaction, iso, merge,
                                   split_around, to_epoch)
+from flows_timeline.minutes import list_minutes, read_minutes
 from flows_timeline.render import render_preamble, render_text
 from flows_timeline.service import (NO_SESSION, REACTION_FOUND, REACTION_MISSING,
                                     REACTION_NOT_YOURS, build_timeline, fetch_meetings,
@@ -22,4 +23,4 @@ __all__ = ["EVENT_KINDS", "STEP_KINDS", "Event", "concerns", "event_from_meeting
            "list_reactions", "read_flows",
            "reaction_concerns", "REACTION_FOUND", "REACTION_MISSING", "REACTION_NOT_YOURS",
            "resolve_identity",
-           "window", "render_preamble", "render_text"]
+           "window", "render_preamble", "render_text", "list_minutes", "read_minutes"]
