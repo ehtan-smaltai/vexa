@@ -9,12 +9,18 @@
 # Run on the compose host, from deploy/compose:
 #   ./bin/phase1-replay --seed-only      # seed + readability check, no reaction
 #   ./bin/phase1-replay                  # seed + admit + wait + list Mailpit
+#   ./bin/phase1-replay --calendar       # as a CALENDAR meeting: the admitted fact carries NO
+#                                        # participants and no names, exactly what meeting-api
+#                                        # publishes when a meeting came from an ICS feed rather
+#                                        # than an emailed invite (events.meeting_completed_refs).
+#                                        # The roster then has to come off the meeting row.
 #
 # Needs: .env (ADMIN_TOKEN, VEXA_FLOWS_API_KEY), ~/api-key.txt (a bot,tx key for user 1),
 #        ~/compose-cmd.txt (the compose command with every override file).
 set -euo pipefail
 
 SEED_ONLY=0; [ "${1:-}" = "--seed-only" ] && SEED_ONLY=1
+CALENDAR=0; [ "${1:-}" = "--calendar" ] && CALENDAR=1
 C=$(cat ~/compose-cmd.txt)
 KEY=$(cat ~/api-key.txt)
 _envv() { grep -E "^$1=" .env | head -1 | cut -d= -f2- | tr -d '[:space:]'; }
@@ -84,14 +90,21 @@ if [ "$SEED_ONLY" = 1 ]; then
 fi
 
 SRC="replay-${MID}-${TS}"
-echo "→ admitting meeting.completed (${SRC}) into flows-api"
-curl -sf -X POST "${FLOWS}/events" -H "X-Flows-Operator-Key: ${FLOWS_KEY}" -H "Content-Type: application/json" -d @- <<JSON | python3 -c 'import sys,json; print("  ", json.dumps(json.load(sys.stdin))[:300])'
-{"event_type":"meeting.completed","source_event_id":"${SRC}",
- "refs":{"uid":"1","meeting_id":"${MID}","native":"${NATIVE}","platform":"google_meet",
-         "organizer":"${ORG}","title":"${TITLE}","completion_reason":"replay",
-         "participants":["${ORG}","${A1}","${A2}"],
-         "participant_names":{"${A1}":"Priya Raman","${A2}":"Marco Bellini","${ORG}":"Ethan"}}}
-JSON
+if [ "$CALENDAR" = 1 ]; then
+  # EXACTLY what meeting-api publishes (events.meeting_completed_refs): no invite, so no
+  # participants, no names, no organizer, no title. Everything else must be resolved downstream.
+  echo "→ admitting meeting.completed (${SRC}) as a CALENDAR meeting — no participants in the fact"
+  REFS='{"uid":"1","meeting_id":"'"${MID}"'","native":"'"${NATIVE}"'","platform":"google_meet","completion_reason":"replay"}'
+else
+  echo "→ admitting meeting.completed (${SRC}) into flows-api"
+  REFS='{"uid":"1","meeting_id":"'"${MID}"'","native":"'"${NATIVE}"'","platform":"google_meet",
+         "organizer":"'"${ORG}"'","title":"'"${TITLE}"'","completion_reason":"replay",
+         "participants":["'"${ORG}"'","'"${A1}"'","'"${A2}"'"],
+         "participant_names":{"'"${A1}"'":"Priya Raman","'"${A2}"'":"Marco Bellini","'"${ORG}"'":"Ethan"}}'
+fi
+curl -sf -X POST "${FLOWS}/events" -H "X-Flows-Operator-Key: ${FLOWS_KEY}" -H "Content-Type: application/json" \
+  -d "{\"event_type\":\"meeting.completed\",\"source_event_id\":\"${SRC}\",\"refs\":${REFS}}" \
+  | python3 -c 'import sys,json; print("  ", json.dumps(json.load(sys.stdin))[:300])'
 
 echo "→ waiting for the post_meeting reaction (up to 15 min)"
 for i in $(seq 1 90); do

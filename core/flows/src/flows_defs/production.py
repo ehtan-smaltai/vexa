@@ -373,6 +373,75 @@ def _meeting_stamp(ctx, uid) -> str:
 ATTENDEE_MAIL_ATTEMPTS = 3
 
 
+def _roster(ctx) -> dict:
+    """WHO WAS IN THIS MEETING AND WHAT IT WAS CALLED — from the fact when the fact carries it,
+    else from the meeting row. Returns `{organizer, title, participants, participant_names}`.
+
+    THE TWO LINEAGES DO NOT CARRY THE SAME FACT, and every step after `process_meeting` was
+    written against only one of them. An emailed invite names its organizer, its title and its
+    ATTENDEE lines, so `invite_intake` puts all four into the reaction at admission. A CALENDAR
+    meeting has no invite: meeting-api publishes `meeting.completed` with
+    `{uid, meeting_id, native, platform, completion_reason}` and nothing else
+    (`meetings/…/events.meeting_completed_refs`), and it usually WINS the race to admit — it fires
+    the instant the row goes `completed`, while the invite lane's own `emit_completed` waits for a
+    poll tick. So on a calendar meeting `email_minutes` raised `KeyError('organizer')` before it
+    could send anything at all, and the whole room got nothing: not the organizer, not one
+    attendee. Measured, not inferred — a calendar-shaped replay mails zero.
+
+    THE ROW IS THE SECOND SOURCE because it is where calendar sync already put these facts:
+    `data.name` is the event's SUMMARY and `data.attendees` is its ATTENDEE list, normalised to
+    `{email, name?, partstat?}` and reconciled with the feed for as long as the meeting is still
+    planned (`meetings/…/calendar_sync`). Nothing new is stored and nothing is guessed.
+
+    THE ORGANIZER IS THE VEXA USER, NOT THE ICS `ORGANIZER`. The word means one thing in this lane
+    — *who had Vexa in the room*, the person the minutes mail is addressed to and whose domain
+    bounds the fan-out — and on a calendar meeting that is the owner of the row, resolved through
+    identity. The ICS organizer is whoever booked the call, who is frequently at another company;
+    mailing them the minutes and treating their domain as the inside domain would invert the
+    containment `_attendees` exists to enforce.
+
+    ONCE PER REACTION, in `scratch`: four steps ask, the answer cannot change between them, and
+    the row read is an HTTP call that would otherwise run four times per meeting. Same home and
+    same reasoning as `_meeting_stamp`, one screen up.
+    """
+    cached = ctx.scratch.get("_roster") if hasattr(ctx, "scratch") else None
+    if isinstance(cached, dict):
+        return cached
+    refs = getattr(ctx, "refs", None) or {}
+    uid = str(refs.get("uid") or "")
+    organizer = str(refs.get("organizer") or "").strip()
+    title = str(refs.get("title") or "").strip()
+    participants = [str(a).strip() for a in (refs.get("participants") or []) if str(a).strip()]
+    names = {str(k): str(v) for k, v in (refs.get("participant_names") or {}).items() if v}
+    # ONE read, and only when something is actually missing: the invite lineage must not pay an
+    # HTTP call per meeting to re-learn what it already carries.
+    if not (organizer and title and participants):
+        row = mt.meeting_row(uid, refs.get("meeting_id"), refs.get("native"))
+        data = (row.get("data") or {}) if isinstance(row, dict) else {}
+        if not organizer:
+            organizer = _common.platform_user_email(uid)
+        if not title:
+            title = str(data.get("name") or "").strip()
+        if not participants:
+            for a in (data.get("attendees") or []):
+                if not isinstance(a, dict):
+                    continue
+                email = str(a.get("email") or "").strip()
+                # A ROOM OR RESOURCE has no address worth mailing; calendar sync already excludes
+                # them from this list, and a malformed entry must not become a recipient.
+                if not email or "@" not in email or email in participants:
+                    continue
+                participants.append(email)
+                who = str(a.get("name") or "").strip()
+                if who and email not in names:
+                    names[email] = who
+    out = {"organizer": organizer, "title": title,
+           "participants": participants, "participant_names": names}
+    if hasattr(ctx, "scratch"):
+        ctx.scratch["_roster"] = out
+    return out
+
+
 def _note_path(ctx, uid, title) -> str:
     """THE ONE RECIPE for where a meeting's record lands on a desk:
     `kg/entities/meeting/<meeting-day>-<title-slug>.md`.
@@ -450,9 +519,12 @@ def _scaffold_refs(ctx, uid) -> dict:
     # that does not exist yet is the documented, tested behaviour ("it appears when the
     # conversation (or a meeting) writes one"). What was NOT survivable was naming a file
     # nothing would ever write.
-    if ctx.refs.get("title"):
+    # THE ROSTER'S title, so the tab names the right file on a calendar meeting too — its title
+    # lives on the meeting row, not in the fact.
+    _title = _roster(ctx)["title"] if hasattr(ctx, "scratch") else ctx.refs.get("title")
+    if _title:
         try:
-            refs["note_path"] = _note_path(ctx, uid, ctx.refs["title"])
+            refs["note_path"] = _note_path(ctx, uid, _title)
         except Exception:  # noqa: BLE001 — a path we cannot compute is not a reason to fail a mint
             pass
     return refs
@@ -880,9 +952,11 @@ def build(reg: Registry, db) -> None:
             # under-fill the room". Twelve addresses of which nine have no desk is a three-desk
             # room. Flows orders; agent-api resolves, then cuts at `read_max`.
             read_max = _room_read_max(ctx)
+            # THE ROSTER, not the raw refs: a calendar meeting's fact carries no participants at
+            # all, and reading them straight off it opened the room on nobody.
+            roster = _roster(ctx)
             room_read = mt.room_order(uid, ctx.refs["meeting_id"],
-                                      ctx.refs.get("participants") or [],
-                                      ctx.refs.get("participant_names") or {})
+                                      roster["participants"], roster["participant_names"])
             ctx.scratch["room_read"] = room_read
             # (`row` / `row_id` are resolved at the top of this branch — the kick needs them too.)
             # The PROMPT names only as many desks as agent-api will actually mount: the wire
@@ -891,7 +965,7 @@ def build(reg: Registry, db) -> None:
             ctx.scratch["baseline"] = ag.dispatch_turn(
                 uid, session, kick,
                 room={"meeting_id": row_id, "read": room_read,
-                      "names": ctx.refs.get("participant_names") or {},
+                      "names": roster["participant_names"],
                       "read_max": read_max} if row_id else None)
             # THE BEFORE WITNESS for the no-desk-write detector below. Taken here, once, rather
             # than at the check: the regrounding branch re-dispatches, and a witness re-read after
@@ -1065,8 +1139,17 @@ def build(reg: Registry, db) -> None:
         # chat that cannot see the meeting the mail is about.
         row = mt.meeting_row(ctx.refs["uid"], ctx.refs.get("meeting_id"), ctx.refs.get("native"))
         row_id = (row or {}).get("id") if isinstance(row, dict) else None
+        # THE ROSTER, not the raw refs. `ctx.refs["organizer"]` raised KeyError on every calendar
+        # meeting — before the mint, before the mail, before anything — so the room got nothing.
+        roster = _roster(ctx)
+        if not roster["organizer"]:
+            raise StepError(
+                f"no organizer could be resolved for meeting {row_id or ctx.refs.get('meeting_id')}: "
+                "the fact carries none and identity has no address for "
+                f"user {ctx.refs.get('uid')!r}. Not sending: minutes with no addressee are not "
+                "minutes.", retryable=True)
         link = mint_scaffold(
-            "post-meeting", ctx.refs["organizer"], opening="minutes-review",
+            "post-meeting", roster["organizer"], opening="minutes-review",
             meeting_id=row_id or ctx.refs["meeting_id"],
             refs=_scaffold_refs(ctx, ctx.refs["uid"]),
             provenance={"flow": "post_meeting", "step": "email_minutes",
@@ -1082,7 +1165,8 @@ def build(reg: Registry, db) -> None:
                 "Reply to this email with corrections or questions — I'll update what we hold "
                 "and answer here."
                 + (" Or open it and talk it through:" if link else ""))
-        mid = notify(ctx.refs["organizer"], f"Minutes: {ctx.refs['title']}", body, link=link)
+        mid = notify(roster["organizer"],
+                     f"Minutes: {roster['title'] or 'your meeting'}", body, link=link)
         mx.register_thread(db, mid, ctx.refs["uid"], f"meet-{ctx.refs['meeting_id']}")
         return Done({"message_id": mid, "link": link}, provider_ref=mid)
 
@@ -1128,8 +1212,11 @@ def build(reg: Registry, db) -> None:
         """
         import datetime
         import os
-        title = ctx.refs.get("title") or "your meeting"
-        organizer = ctx.refs.get("organizer") or "the organiser"
+        # THE ROSTER, so the provenance line names the meeting and the person on a calendar
+        # meeting too, instead of "your meeting" and "the organiser" to everyone in the room.
+        _r = _roster(ctx)
+        title = _r["title"] or "your meeting"
+        organizer = _r["organizer"] or "the organiser"
         when = ""
         start = ctx.refs.get("start")
         if start:
@@ -1253,8 +1340,12 @@ def build(reg: Registry, db) -> None:
         """Inside-domain attendees, minus the organizer. PRD §16.2: outside the domain, NEVER —
         so an unset allow-list means the organizer's own domain, not everyone."""
         import os
-        org = (ctx.refs.get("organizer") or "").lower()
-        raw = ctx.refs.get("participants") or []
+        # THE ROSTER. On a calendar meeting `participants` is absent from the fact and lives on
+        # the meeting row, and `organizer` is the row's owner — read straight off refs, this
+        # returned [] for every such meeting and nobody in the room was ever mailed.
+        _r = _roster(ctx)
+        org = (_r["organizer"] or "").lower()
+        raw = _r["participants"]
         allow = (ctx.flow.param("attendee_domains") if ctx.flow else None) or \
             [d for d in os.environ.get("VEXA_FLOWS_ATTENDEE_DOMAINS", "").split(",") if d] or \
             ([org.split("@")[-1]] if "@" in org else [])
@@ -1346,9 +1437,10 @@ def build(reg: Registry, db) -> None:
         # `{{company}}` and `{{service}}` are `render`'s own — no caller can forget them or spell
         # the product differently — and an unknown token is left STANDING on purpose.
         try:
+            _r = _roster(ctx)
             subject, head = mailtext.render("attendee-head", ctx.refs["uid"], {
-                "organizer": ctx.refs.get("organizer") or "the organiser",
-                "meeting": ctx.refs.get("title") or "your meeting",
+                "organizer": _r["organizer"] or "the organiser",
+                "meeting": _r["title"] or "your meeting",
                 "date": _meeting_date(ctx, ctx.refs["uid"]),
             })
         except KeyError as e:
@@ -1367,7 +1459,7 @@ def build(reg: Registry, db) -> None:
             # means somebody edited the header out of the live file.
             logger.warning("the attendee-head template carries no `subject:` line — falling back "
                            "to the meeting title")
-            subject = ctx.refs.get("title") or "Your meeting"
+            subject = _roster(ctx)["title"] or "Your meeting"
         # ONE BODY, BUILT ONCE, FOR EVERYBODY. Nothing inside the loop touches it.
         body = head + "\n\n" + report
         # Durable across retries: a StepError below re-runs this step, and an attendee already
@@ -1626,16 +1718,18 @@ def build(reg: Registry, db) -> None:
             return Done({"dropped": 0, "to": [], "failed": [],
                          "skipped": "there is no report to drop"})
         uid = ctx.refs["uid"]
-        title = ctx.refs.get("title") or "your meeting"
-        organizer = ctx.refs.get("organizer") or "the organiser"
+        # THE ROSTER, so a calendar meeting's desk copy carries its real title and roster rather
+        # than "your meeting" and a room of one.
+        _r = _roster(ctx)
+        title = _r["title"] or "your meeting"
+        organizer = _r["organizer"] or "the organiser"
         day = _meeting_stamp(ctx, uid)[:10]          # the MEETING's day, in the organiser's zone
         date_prose = _meeting_date(ctx, uid)
         entity_path = _note_path(ctx, uid, title)      # the one recipe — see `_note_path`
         filename = entity_path.rsplit("/", 1)[-1]
         index_path = "kg/entities/meeting/index.md"
         att = ctx.prior.get("email_attendees") or {}
-        roster = [str(a).strip().lower() for a in (ctx.refs.get("participants") or [])
-                  if str(a).strip()]
+        roster = [str(a).strip().lower() for a in _r["participants"] if str(a).strip()]
         if organizer.lower() not in roster:
             roster = [organizer.lower()] + roster
         # THE ORGANISER IS ONE OF THE ROOM. Their link is the one `email_minutes` already built —

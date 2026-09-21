@@ -394,6 +394,22 @@ def platform_user_id(email: str) -> str:
     return str(u["id"]) if code == 200 and isinstance(u, dict) and u.get("id") is not None else ""
 
 
+def platform_user_email(uid: str) -> str:
+    """This person's ADDRESS from their platform id, or "" — the reverse of `platform_user_id`.
+
+    Written for the calendar lane. An invite names its organizer, so `invite_intake` carries the
+    address in the fact from the start; a CALENDAR meeting has no invite and meeting-api publishes
+    only `{uid, meeting_id, native, platform, completion_reason}`, so the one thing the whole
+    post-meeting lane needs first — who to mail — has to be resolved from the id. Identity is the
+    domain that owns the mapping and the only one every other may depend on, so it is asked rather
+    than inferred from the meeting row's ICS `ORGANIZER`, which is a different person whenever
+    somebody else booked the call.
+    """
+    code, u = http("GET", f"{_door('VEXA_FLOWS_ADMIN_API_URL')}/admin/users/"
+                          f"{_q(str(uid), safe='')}", _admin_headers())
+    return str(u.get("email") or "") if code == 200 and isinstance(u, dict) else ""
+
+
 def ensure_platform_user(email: str) -> str:
     """This person's platform id, CREATING the account when they have none.
 

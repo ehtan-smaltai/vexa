@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "change_id": "phase2-calendar-attendees",
+  "kind": "bug",
+  "created_at": "2026-09-20T23:17:08+00:00",
+  "git": {
+    "available": true,
+    "repository_scope": "project-root",
+    "head": "7d727ea280146f567fcbcd7ddee715375a85a686",
+    "branch": "phase-1",
+    "dirty": false
+  },
+  "notice": "Historical baseline only. No implementation or checks performed."
+}
