@@ -339,6 +339,12 @@ services:
       # capture-only bots instead of 503-ing every default POST /bots.
       - TRANSCRIBE_ENABLED=${TRANSCRIBE_ENABLED:-true}
       - RECORDING_ENABLED=${RECORDING_ENABLED:-true}
+      # How long a spawned bot sits in a SILENT room before it calls the meeting over
+      # (`left_alone`), for requests that name no window of their own. Unset/0 stays silent and the
+      # bot applies its own 10-minute default. A lingering bot is not idle — it holds a browser, a
+      # capture chain and an STT stream — so a small host wants this well under ten minutes, while
+      # too short a window lets a genuine pause read as an empty room.
+      - VEXA_BOT_EVERYONE_LEFT_TIMEOUT_S=${VEXA_BOT_EVERYONE_LEFT_TIMEOUT_S:-}
       # Authenticated-bot mode (deployment-scoped): when true, every spawned bot restores the
       # provisioned browser session (make login) from the userdata store and joins signed-in.
       # BOT_S3_* are SCOPED userdata credentials — never the deployment's admin S3 creds.

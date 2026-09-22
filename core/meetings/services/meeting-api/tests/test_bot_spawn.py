@@ -303,6 +303,7 @@ def test_post_bots_legacy_everyone_left_alias_still_works(monkeypatch):
 
 
 def test_post_bots_omits_everyone_left_when_not_explicit(monkeypatch):
+    monkeypatch.delenv("VEXA_BOT_EVERYONE_LEFT_TIMEOUT_S", raising=False)
     monkeypatch.setenv("ADMIN_TOKEN", SECRET)
     monkeypatch.setenv("TRANSCRIPTION_SERVICE_URL", "https://stt.vexa.ai")
     runtime = FakeRuntimeClient()
@@ -313,6 +314,64 @@ def test_post_bots_omits_everyone_left_when_not_explicit(monkeypatch):
     assert r.status_code == 201, r.text
     inv = json.loads(runtime.specs[0]["env"]["BOT_CONFIG"])
     assert inv["automaticLeave"] == {"waitingRoomTimeout": 900_000}
+
+
+def test_post_bots_issues_deployment_everyone_left_window(monkeypatch):
+    """A host that sets the window hands it to every bot that asked for none.
+
+    The bot's own module default is ten minutes of silence. On a small host that is ten minutes of
+    browser + capture + STT held open after the room empties — CPU the transcriber needs — so the
+    window has to be settable per deployment, not only per request.
+    """
+    monkeypatch.setenv("VEXA_BOT_EVERYONE_LEFT_TIMEOUT_S", "300")
+    monkeypatch.setenv("ADMIN_TOKEN", SECRET)
+    monkeypatch.setenv("TRANSCRIPTION_SERVICE_URL", "https://stt.vexa.ai")
+    runtime = FakeRuntimeClient()
+    r = _client(runtime=runtime).post(
+        "/bots", headers=HEADERS,
+        json={"platform": "google_meet", "native_meeting_id": "deployment-window"},
+    )
+    assert r.status_code == 201, r.text
+    inv = json.loads(runtime.specs[0]["env"]["BOT_CONFIG"])
+    assert inv["automaticLeave"]["everyoneLeftTimeout"] == 300_000
+    assert inv["automaticLeave"]["waitingRoomTimeout"] == 900_000
+
+
+def test_post_bots_caller_window_beats_the_deployment_default(monkeypatch):
+    """An explicit request is an opinion; the deployment default is only a fallback."""
+    monkeypatch.setenv("VEXA_BOT_EVERYONE_LEFT_TIMEOUT_S", "300")
+    monkeypatch.setenv("ADMIN_TOKEN", SECRET)
+    monkeypatch.setenv("TRANSCRIPTION_SERVICE_URL", "https://stt.vexa.ai")
+    runtime = FakeRuntimeClient()
+    r = _client(runtime=runtime).post(
+        "/bots", headers=HEADERS,
+        json={"platform": "google_meet", "native_meeting_id": "caller-wins",
+              "automatic_leave": {"max_time_left_alone": 45_000}},
+    )
+    assert r.status_code == 201, r.text
+    inv = json.loads(runtime.specs[0]["env"]["BOT_CONFIG"])
+    assert inv["automaticLeave"]["everyoneLeftTimeout"] == 45_000
+
+
+@pytest.mark.parametrize("raw", ["", "   ", "not-a-number", "0", "-30"])
+def test_post_bots_unusable_window_stays_unsaid(monkeypatch, raw):
+    """Unset, empty, unparseable, zero and negative all mean UNSAID — never a window of zero.
+
+    Zero is the dangerous reading: a bot told to leave after 0ms of silence concludes the room is
+    empty the instant nobody is talking, which is the failure the window exists to prevent. Unsaid
+    hands the bot its own ten-minute default instead.
+    """
+    monkeypatch.setenv("VEXA_BOT_EVERYONE_LEFT_TIMEOUT_S", raw)
+    monkeypatch.setenv("ADMIN_TOKEN", SECRET)
+    monkeypatch.setenv("TRANSCRIPTION_SERVICE_URL", "https://stt.vexa.ai")
+    runtime = FakeRuntimeClient()
+    r = _client(runtime=runtime).post(
+        "/bots", headers=HEADERS,
+        json={"platform": "google_meet", "native_meeting_id": f"unusable-{abs(hash(raw))}"},
+    )
+    assert r.status_code == 201, r.text
+    inv = json.loads(runtime.specs[0]["env"]["BOT_CONFIG"])
+    assert "everyoneLeftTimeout" not in inv["automaticLeave"]
 
 
 def test_post_bots_lobby_budget_default_is_fifteen_minutes(monkeypatch):

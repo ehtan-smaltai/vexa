@@ -82,6 +82,66 @@ __all__ = [
 DEFAULT_LOBBY_BUDGET_S = 900
 LOBBY_BUDGET_MS = DEFAULT_LOBBY_BUDGET_S * 1000
 
+#: How long a bot sits in a SILENT room before it calls the meeting over (`left_alone`), when the
+#: caller named no window of its own. `0` means "say nothing", which hands the bot its own
+#: 10-minute module default — the shipped behaviour.
+#:
+#: A DEPLOYMENT KNOB, because the right answer is a property of the host, not of the request. A bot
+#: that lingers is not idle: it holds a browser, a capture chain and an STT stream, and on a small
+#: box that is CPU the transcriber needs. Ten minutes of that after every meeting is affordable on
+#: a large host and is not on a 2-core one. The opposite error is worse and is why this is not
+#: simply lowered for everyone: a window under a few minutes lets a genuine pause — a silent demo,
+#: a room reading a document — read as an empty room, and the bot walks out of a live meeting.
+DEFAULT_EVERYONE_LEFT_TIMEOUT_S = 0
+
+
+def everyone_left_timeout_ms() -> Optional[int]:
+    """The silent-room window (ms) this deployment issues, or ``None`` to leave it unsaid.
+
+    ``VEXA_BOT_EVERYONE_LEFT_TIMEOUT_S``. Read at CALL time like ``lobby_budget_ms`` and for the
+    same reason. Unset, empty, unparseable or non-positive all mean UNSAID rather than zero: a
+    window of zero would make every bot conclude it was alone the moment it stopped hearing
+    anybody, which is the failure this window exists to prevent.
+    """
+    raw = os.getenv("VEXA_BOT_EVERYONE_LEFT_TIMEOUT_S")
+    if raw is None or not raw.strip():
+        seconds: float = DEFAULT_EVERYONE_LEFT_TIMEOUT_S
+    else:
+        try:
+            seconds = float(raw)
+        except ValueError:
+            # Unsaid, not zero, and SAID SO: a misconfigured window that silently reverted would
+            # leave an operator believing they had shortened it.
+            log_event(
+                "bot_spawn_everyone_left_timeout_unparseable", audience="system",
+                level="warning", span="bots.create", fields={"raw": raw},
+            )
+            seconds = DEFAULT_EVERYONE_LEFT_TIMEOUT_S
+    return int(seconds * 1000) if seconds > 0 else None
+
+
+def _with_deployment_windows(automatic_leave: Optional[dict]) -> dict:
+    """The caller's `automaticLeave`, with this deployment's windows filling the keys it left out.
+
+    FILLING A GAP IS NOT OVERRIDING AN OPINION, and the distinction is what makes this safe: an
+    absent key is a caller who said nothing about that window, and `router.py` writes
+    `everyoneLeftTimeout` ONLY when the request named one. A present key is always the caller's and
+    is never touched.
+
+    It fills a gap rather than replacing the whole block because the block is never empty by the
+    time it arrives: the router synthesises `waitingRoomTimeout` on every request, from the caller's
+    value or the lobby budget. A fallback that waited for an absent block would therefore never fire
+    on any HTTP request at all — which is exactly what the first version of this did, and what
+    `test_post_bots_issues_deployment_everyone_left_window` caught.
+    """
+    block = dict(automatic_leave or {})
+    block.setdefault("waitingRoomTimeout", lobby_budget_ms())
+    if "everyoneLeftTimeout" not in block:
+        window = everyone_left_timeout_ms()
+        if window is not None:
+            block["everyoneLeftTimeout"] = window
+    return block
+
 
 def lobby_budget_ms() -> int:
     """The lobby budget (ms) this deployment issues — ``VEXA_LOBBY_BUDGET_S``, default 900.
@@ -773,10 +833,9 @@ async def request_bot(
         s3_bucket=auth_s3.get("s3_bucket"),
         s3_access_key=auth_s3.get("s3_access_key"),
         s3_secret_key=auth_s3.get("s3_secret_key"),
-        # Explicit caller windows win; otherwise omit everyoneLeftTimeout so the bot's
-        # silence-window module default applies (the lobby window stays forgiving for
-        # human-in-the-loop dashboard joins).
-        automatic_leave=automatic_leave or {"waitingRoomTimeout": lobby_budget_ms()},
+        # Explicit caller windows win; otherwise this deployment's own defaults apply (the lobby
+        # window stays forgiving for human-in-the-loop dashboard joins).
+        automatic_leave=_with_deployment_windows(automatic_leave),
     )
 
     # 4b. THE SPAWN FENCE (F2, stage rev 193 row 26313). Re-read this row's user-stop flag from the
